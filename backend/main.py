@@ -112,6 +112,9 @@ def enrich_holding(raw: dict) -> dict:
         "rec_score": rec["score"],
         "rec_color": rec["color"],
         "rec_reasons": rec["reasons"],
+        "rec_breakdown": rec["breakdown"],
+        "rec_next_tier": rec.get("next_tier"),
+        "rec_next_pts": rec.get("next_pts_needed"),
     }
 
 
@@ -278,6 +281,9 @@ def get_watchlist():
             "rec_score": rec["score"],
             "rec_color": rec["color"],
             "rec_reasons": rec["reasons"],
+            "rec_breakdown": rec["breakdown"],
+            "rec_next_tier": rec.get("next_tier"),
+            "rec_next_pts": rec.get("next_pts_needed"),
         }
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
@@ -456,6 +462,9 @@ def discover_stocks():
                 "rec_score": rec["score"],
                 "rec_color": rec["color"],
                 "rec_reasons": rec["reasons"],
+                "rec_breakdown": rec["breakdown"],
+                "rec_next_tier": rec.get("next_tier"),
+                "rec_next_pts": rec.get("next_pts_needed"),
             }
         except Exception:
             return None

@@ -3,7 +3,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
   DollarSign, TrendingUp, TrendingDown, Activity, Plus, RefreshCw,
-  BarChart2, Award, Zap, LayoutGrid, BookOpen, Target,
+  BarChart2, Award, LayoutGrid, Target, ArrowUpRight, ArrowDownRight,
+  Calendar, Layers,
 } from "lucide-react";
 import { api } from "@/api/client";
 import { SummaryCard } from "@/components/SummaryCard";
@@ -63,10 +64,16 @@ export function PortfolioPage({ portfolio }: Props) {
   const topPerformers   = sorted.slice(0, 5);
   const worstPerformers = sorted.slice(-5).reverse();
 
-  // Weighted avg annualized return
   const totalValue = holdings.reduce((s, h) => s + h.current_value, 0);
   const winners = holdings.filter((h) => h.gain > 0).length;
   const winRate = holdings.length ? (winners / holdings.length) * 100 : 0;
+
+  // Quick stats for the strip
+  const todayUp   = holdings.filter((h) => h.change > 0).length;
+  const todayDown = holdings.filter((h) => h.change < 0).length;
+  const avgAlpha  = holdings.length ? holdings.reduce((s, h) => s + h.alpha * 100, 0) / holdings.length : 0;
+  const buys      = holdings.filter((h) => h.recommendation === "STRONG BUY" || h.recommendation === "BUY").length;
+  const sells     = holdings.filter((h) => h.recommendation === "SELL" || h.recommendation === "STRONG SELL").length;
 
   return (
     <div className="p-6 max-w-[1600px] mx-auto space-y-5">
@@ -172,6 +179,28 @@ export function PortfolioPage({ portfolio }: Props) {
       {/* === OVERVIEW TAB === */}
       {activeTab === "overview" && !isLoading && holdings.length > 0 && (
         <div className="space-y-5">
+
+          {/* Quick stats strip */}
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1 }}
+            className="flex flex-wrap gap-2"
+          >
+            {[
+              { label: "Today",     value: `${todayUp}↑ ${todayDown}↓`,        color: todayUp > todayDown ? "text-gain" : "text-loss",     bg: "bg-white/[0.04] border-white/[0.07]" },
+              { label: "Avg Alpha", value: `${avgAlpha >= 0 ? "+" : ""}${avgAlpha.toFixed(1)}%`, color: gainColor(avgAlpha), bg: "bg-white/[0.04] border-white/[0.07]" },
+              { label: "Buy signals",  value: `${buys}`,  color: "text-gain",  bg: "bg-gain/10 border-gain/20" },
+              { label: "Sell signals", value: `${sells}`, color: "text-loss",  bg: sells > 0 ? "bg-loss/10 border-loss/20" : "bg-white/[0.04] border-white/[0.07]" },
+              { label: "Positions",    value: `${holdings.length}`, color: "text-slate-300", bg: "bg-white/[0.04] border-white/[0.07]" },
+            ].map(({ label, value, color, bg }) => (
+              <div key={label} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs ${bg}`}>
+                <span className="text-slate-500">{label}:</span>
+                <span className={`font-bold font-mono ${color}`}>{value}</span>
+              </div>
+            ))}
+          </motion.div>
+
           {/* Charts row */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <motion.div
@@ -180,7 +209,10 @@ export function PortfolioPage({ portfolio }: Props) {
               transition={{ delay: 0.15 }}
               className="bg-[#0e1726] border border-white/[0.07] rounded-2xl p-5"
             >
-              <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-500 mb-4">Portfolio Mix</p>
+              <div className="flex items-center justify-between mb-4">
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Allocation</p>
+                <span className="text-[10px] text-slate-600">{holdings.length} positions</span>
+              </div>
               <PortfolioPieChart holdings={holdings} />
             </motion.div>
 
@@ -191,17 +223,22 @@ export function PortfolioPage({ portfolio }: Props) {
               className="bg-[#0e1726] border border-white/[0.07] rounded-2xl p-5"
             >
               <div className="flex items-center justify-between mb-4">
-                <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Performance</p>
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Performance</p>
+                  <p className="text-[10px] text-slate-600 mt-0.5">
+                    {chartView === "gain" ? "Total gain % since purchase" : "Outperformance vs S&P 500"}
+                  </p>
+                </div>
                 <div className="flex rounded-lg border border-white/[0.07] overflow-hidden">
                   {(["gain", "alpha"] as const).map((v) => (
                     <button
                       key={v}
                       onClick={() => setChartView(v)}
-                      className={`px-3 py-1 text-xs font-semibold transition-colors ${
+                      className={`px-3 py-1.5 text-xs font-semibold transition-colors ${
                         chartView === v ? "bg-accent-blue/20 text-accent-blue" : "text-slate-500 hover:text-slate-300"
                       }`}
                     >
-                      {v === "gain" ? "Gain %" : "Alpha vs S&P"}
+                      {v === "gain" ? "Gain %" : "Alpha"}
                     </button>
                   ))}
                 </div>
@@ -210,11 +247,11 @@ export function PortfolioPage({ portfolio }: Props) {
             </motion.div>
           </div>
 
-          {/* Performers */}
+          {/* Performers — rich cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {[
               { label: "Top Performers", list: topPerformers, isWinner: true },
-              { label: "Worst Performers", list: worstPerformers, isWinner: false },
+              { label: "Underperformers", list: worstPerformers, isWinner: false },
             ].map(({ label, list, isWinner }) => (
               <motion.div
                 key={label}
@@ -223,24 +260,77 @@ export function PortfolioPage({ portfolio }: Props) {
                 transition={{ delay: 0.25 }}
                 className="bg-[#0e1726] border border-white/[0.07] rounded-2xl p-5"
               >
-                <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-500 mb-4">
-                  {label}
-                </p>
-                <div className="space-y-3">
+                <div className="flex items-center gap-2 mb-4">
+                  <div className={`w-6 h-6 rounded-lg flex items-center justify-center ${isWinner ? "bg-gain/10" : "bg-loss/10"}`}>
+                    {isWinner
+                      ? <ArrowUpRight className="w-3.5 h-3.5 text-gain" />
+                      : <ArrowDownRight className="w-3.5 h-3.5 text-loss" />}
+                  </div>
+                  <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">{label}</p>
+                </div>
+
+                <div className="space-y-2">
                   {list.map((h, i) => (
-                    <div key={h.ticker} className="flex items-center gap-3">
-                      <span className="text-[10px] text-slate-600 w-4 text-center">{i + 1}</span>
-                      <span className="w-14 font-mono font-bold text-xs text-white shrink-0">{h.ticker}</span>
-                      <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full ${isWinner ? "bg-gain" : "bg-loss"}`}
-                          style={{ width: `${Math.min(100, Math.abs(h.gain_pct) / 3)}%` }}
-                        />
+                    <div
+                      key={h.ticker}
+                      className={`rounded-xl p-3 border ${
+                        isWinner
+                          ? "bg-gain/[0.04] border-gain/[0.1]"
+                          : "bg-loss/[0.04] border-loss/[0.1]"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        {/* Left: rank + ticker + name */}
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className="text-[10px] text-slate-700 font-bold w-4 shrink-0">{i + 1}</span>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-mono font-extrabold text-sm text-white">{h.ticker}</span>
+                              <RecBadge rec={h.recommendation} small />
+                            </div>
+                            <p className="text-[10px] text-slate-500 truncate max-w-[120px]">{h.name}</p>
+                          </div>
+                        </div>
+
+                        {/* Right: price + today's change */}
+                        <div className="text-right shrink-0">
+                          <p className="text-sm font-bold text-white font-mono">{formatCurrency(h.price)}</p>
+                          <p className={`text-[11px] font-mono ${gainColor(h.change_pct)}`}>
+                            {h.change_pct >= 0 ? "+" : ""}{h.change_pct.toFixed(2)}% today
+                          </p>
+                        </div>
                       </div>
-                      <span className={`text-xs font-bold font-mono shrink-0 w-16 text-right ${gainColor(h.gain_pct)}`}>
-                        {formatPct(h.gain_pct)}
-                      </span>
-                      <RecBadge rec={h.recommendation} small />
+
+                      {/* Stats row */}
+                      <div className="grid grid-cols-3 gap-1.5 mt-2.5">
+                        {[
+                          { label: "All-time",   value: formatPct(h.gain_pct),    color: gainColor(h.gain_pct) },
+                          { label: "Alpha",      value: formatPct(h.alpha * 100), color: gainColor(h.alpha) },
+                          { label: "Value",      value: h.current_value >= 1000 ? `$${(h.current_value/1000).toFixed(1)}K` : formatCurrency(h.current_value), color: "text-slate-300" },
+                        ].map(({ label, value, color }) => (
+                          <div key={label} className="bg-black/20 rounded-lg p-1.5 text-center">
+                            <p className={`text-xs font-bold font-mono ${color}`}>{value}</p>
+                            <p className="text-[9px] text-slate-600 uppercase tracking-wider">{label}</p>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* 52W range mini bar */}
+                      {h.week_52_low && h.week_52_high && h.week_52_high > h.week_52_low && (
+                        <div className="flex items-center gap-1.5 mt-2">
+                          <span className="text-[9px] text-slate-700 font-mono">{formatCurrency(h.week_52_low)}</span>
+                          <div className="relative flex-1 h-1 bg-slate-800 rounded-full">
+                            <div className="absolute inset-0 rounded-full bg-gradient-to-r from-loss via-amber-500 to-gain opacity-50" />
+                            <div
+                              className="absolute top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-white border border-[#0e1726] z-10"
+                              style={{
+                                left: `calc(${Math.min(100, Math.max(0, (h.price - h.week_52_low) / (h.week_52_high - h.week_52_low) * 100))}% - 4px)`,
+                              }}
+                            />
+                          </div>
+                          <span className="text-[9px] text-slate-700 font-mono">{formatCurrency(h.week_52_high)}</span>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -251,7 +341,10 @@ export function PortfolioPage({ portfolio }: Props) {
           {/* Holdings table */}
           <div>
             <div className="flex items-center justify-between mb-3">
-              <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">All Holdings</p>
+              <div className="flex items-center gap-2">
+                <Layers className="w-3.5 h-3.5 text-slate-500" />
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">All Positions</p>
+              </div>
               <p className="text-[10px] text-slate-600">Click row to expand · Click headers to sort</p>
             </div>
             <HoldingsTable
@@ -270,18 +363,7 @@ export function PortfolioPage({ portfolio }: Props) {
 
       {/* === RECOMMENDATIONS TAB === */}
       {activeTab === "recommendations" && !isLoading && (
-        <div className="space-y-4">
-          <div className="bg-[#0a1628] border border-accent-blue/15 rounded-2xl p-4">
-            <p className="text-xs text-slate-400 leading-relaxed">
-              Recommendations are scored using 7 signals: alpha vs S&P 500, 52-week price position,
-              P/E ratio, today's momentum, beta (volatility), market cap, and distance from 52-week high.
-              Scores range from −75 to +75. A score ≥ 28 is a <span className="text-gain font-semibold">Buy</span>,
-              ≥ 55 is a <span className="text-emerald-400 font-semibold">Strong Buy</span>,
-              and below −8 signals a potential exit.
-            </p>
-          </div>
-          <RecommendationsPanel holdings={holdings} delay={0.05} />
-        </div>
+        <RecommendationsPanel holdings={holdings} delay={0.05} />
       )}
 
       {/* Loading state for tabs */}

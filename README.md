@@ -10,9 +10,12 @@ A full-stack brokerage portfolio tracker with live market data, advanced analyti
 - **4 Portfolio Accounts** — Brokerage Stocks, Brokerage ETFs, Retirement Stocks, Retirement ETFs
 - **Watchlist** — Monitor stocks without adding them to a portfolio
 - **Buy/Sell Recommendations** — 7-signal scoring engine (alpha, 52W range, P/E, momentum, beta, market cap, distance from 52W high)
+- **Score Breakdown** — Visual per-factor bar chart explaining exactly why each stock received its rating, plus points needed to reach the next tier
+- **Recommendations Tab** — Dedicated per-portfolio tab grouping all holdings into Buy / Hold / Sell columns with expandable detail cards
+- **Analytics Tab** — Win rate, annualized return (CAGR), portfolio beta, sector weights, today's movers — one tab per portfolio
 - **Stock Discovery** — Scans a curated 60+ stock universe and surfaces buy opportunities not currently in your portfolio
-- **Analytics Tab** — Win rate, annualized return (CAGR), portfolio beta, sector weights, today's movers
 - **52-Week Range Visualizer** — Color-coded slider showing where each stock sits in its annual range
+- **Temporary Exclusion** — Exclude any holding from calculations on-the-fly to see how the rest of your portfolio performs without it
 - **Add / Edit / Remove** positions with live validation
 - **Dark mode** UI with Inter + JetBrains Mono fonts
 
@@ -101,7 +104,9 @@ portfolio-tracker/
 ├── frontend/
 │   ├── src/
 │   │   ├── pages/            # Overview, PortfolioPage, WatchlistPage
-│   │   ├── components/       # SummaryCard, HoldingsTable, StockDiscovery, ...
+│   │   ├── components/       # SummaryCard, HoldingsTable, MetricsPanel,
+│   │   │                     # RecommendationsPanel, ScoreBreakdown,
+│   │   │                     # StockDiscovery, PortfolioPieChart, ...
 │   │   ├── api/client.ts     # Axios API client
 │   │   └── types.ts          # TypeScript interfaces
 │   ├── tailwind.config.js

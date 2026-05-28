@@ -16,7 +16,7 @@ const PERIODS = [
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-navy-950 border border-surface-border rounded-lg px-3 py-2 text-xs shadow-card">
+    <div className="bg-[#03060f] border border-white/[0.1] rounded-xl px-3 py-2 text-xs shadow-[0_8px_32px_rgba(0,0,0,0.6)]">
       <p className="text-slate-400 mb-1">{label}</p>
       <p className="text-accent-blue font-semibold">{formatCurrency(payload[0].value)}</p>
     </div>

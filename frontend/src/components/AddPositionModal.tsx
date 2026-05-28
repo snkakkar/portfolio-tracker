@@ -70,7 +70,7 @@ export function AddPositionModal({ portfolio, onClose, onSuccess }: Props) {
           exit={{ scale: 0.95, opacity: 0 }}
           transition={{ duration: 0.2 }}
           onClick={(e) => e.stopPropagation()}
-          className="bg-navy-800 border border-surface-border rounded-2xl p-6 w-full max-w-md shadow-card mx-4"
+          className="bg-[#0e1726] border border-white/[0.08] rounded-2xl p-6 w-full max-w-md shadow-card mx-4"
         >
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-lg font-bold text-white">Add Position</h2>
@@ -91,7 +91,7 @@ export function AddPositionModal({ portfolio, onClose, onSuccess }: Props) {
                   value={ticker}
                   onChange={(e) => setTicker(e.target.value.toUpperCase())}
                   placeholder="e.g. AAPL"
-                  className="w-full bg-navy-900 border border-surface-border rounded-lg px-3 py-2.5 pr-9 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-accent-blue/60 font-mono"
+                  className="w-full bg-[#080e1a] border border-white/[0.07] rounded-lg px-3 py-2.5 pr-9 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-accent-blue/60 font-mono"
                   autoFocus
                 />
                 <div className="absolute right-3 top-1/2 -translate-y-1/2">
@@ -126,7 +126,7 @@ export function AddPositionModal({ portfolio, onClose, onSuccess }: Props) {
                 placeholder="e.g. 10"
                 min="0"
                 step="any"
-                className="w-full bg-navy-900 border border-surface-border rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-accent-blue/60"
+                className="w-full bg-[#080e1a] border border-white/[0.07] rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-accent-blue/60"
               />
             </div>
 
@@ -139,7 +139,7 @@ export function AddPositionModal({ portfolio, onClose, onSuccess }: Props) {
                 type="date"
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
-                className="w-full bg-navy-900 border border-surface-border rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-accent-blue/60"
+                className="w-full bg-[#080e1a] border border-white/[0.07] rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-accent-blue/60"
               />
             </div>
 
@@ -155,7 +155,7 @@ export function AddPositionModal({ portfolio, onClose, onSuccess }: Props) {
                 placeholder="e.g. 150.00"
                 min="0"
                 step="any"
-                className="w-full bg-navy-900 border border-surface-border rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-accent-blue/60"
+                className="w-full bg-[#080e1a] border border-white/[0.07] rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-accent-blue/60"
               />
             </div>
           </div>
@@ -170,7 +170,7 @@ export function AddPositionModal({ portfolio, onClose, onSuccess }: Props) {
           <div className="flex gap-3 mt-6">
             <button
               onClick={onClose}
-              className="flex-1 py-2.5 rounded-lg border border-surface-border text-slate-400 hover:text-white hover:bg-white/5 text-sm font-medium transition-colors"
+              className="flex-1 py-2.5 rounded-lg border border-white/[0.07] text-slate-400 hover:text-white hover:bg-white/5 text-sm font-medium transition-colors"
             >
               Cancel
             </button>

@@ -1,9 +1,10 @@
-import { motion } from "framer-motion";
+import { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import {
-  TrendingUp, TrendingDown, Minus, AlertTriangle, XCircle, ChevronRight,
-  BarChart2, Shield, Zap, Target,
+  TrendingUp, TrendingDown, Minus, XCircle, ChevronRight, ChevronDown,
 } from "lucide-react";
 import { cn, formatCurrency, formatPct, gainColor, REC_STYLES } from "@/lib/utils";
+import { ScoreBreakdown } from "./ScoreBreakdown";
 import type { Holding, Recommendation } from "@/types";
 
 interface Props {
@@ -46,77 +47,190 @@ function Range52W({ price, low, high }: { price: number; low: number | null; hig
 }
 
 function HoldingCard({ h, idx }: { h: Holding; idx: number }) {
+  const [showBreakdown, setShowBreakdown] = useState(false);
   const meta = REC_META[h.recommendation];
   const Icon = meta.icon;
+  const accentColor = REC_STYLES[h.recommendation].split(" ")[1];
+
   return (
     <motion.div
       initial={{ opacity: 0, x: -8 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ delay: idx * 0.04 }}
-      className={cn(
-        "rounded-xl border p-3.5 space-y-2.5",
-        meta.bg, meta.border, meta.glow
-      )}
+      className={cn("rounded-xl border overflow-hidden", meta.bg, meta.border, meta.glow)}
     >
-      {/* Header row */}
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center", meta.bg, "border", meta.border)}>
-            <Icon className={cn("w-4 h-4", REC_STYLES[h.recommendation].split(" ")[1])} />
-          </div>
-          <div>
-            <div className="flex items-center gap-1.5">
-              <span className="font-mono font-extrabold text-sm text-white">{h.ticker}</span>
-              <span
-                className={cn(
-                  "text-[10px] font-bold px-1.5 py-0.5 rounded-full border",
-                  REC_STYLES[h.recommendation]
-                )}
-              >
-                {h.recommendation}
-              </span>
+      {/* Main card content */}
+      <div className="p-3.5 space-y-2.5">
+        {/* Header row */}
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center", meta.bg, "border", meta.border)}>
+              <Icon className={cn("w-4 h-4", accentColor)} />
             </div>
-            <p className="text-[10px] text-slate-500 leading-tight truncate max-w-[140px]">{h.name}</p>
+            <div>
+              <div className="flex items-center gap-1.5">
+                <span className="font-mono font-extrabold text-sm text-white">{h.ticker}</span>
+                <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-full border", REC_STYLES[h.recommendation])}>
+                  {h.recommendation}
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-500 leading-tight truncate max-w-[140px]">{h.name}</p>
+            </div>
+          </div>
+          <div className="text-right shrink-0">
+            <p className="text-sm font-bold text-white font-mono">{formatCurrency(h.price)}</p>
+            <p className={cn("text-[11px] font-mono", gainColor(h.change_pct))}>{formatPct(h.change_pct)} today</p>
           </div>
         </div>
-        <div className="text-right shrink-0">
-          <p className="text-sm font-bold text-white font-mono">{formatCurrency(h.price)}</p>
-          <p className={cn("text-[11px] font-mono", gainColor(h.change_pct))}>{formatPct(h.change_pct)} today</p>
+
+        {/* 52W range */}
+        <Range52W price={h.price} low={h.week_52_low} high={h.week_52_high} />
+
+        {/* Stats row */}
+        <div className="grid grid-cols-4 gap-1.5">
+          {[
+            { label: "Gain",   value: formatPct(h.gain_pct),      color: gainColor(h.gain_pct) },
+            { label: "Alpha",  value: formatPct(h.alpha * 100),   color: gainColor(h.alpha) },
+            { label: "P/E",    value: h.pe_ratio ? h.pe_ratio.toFixed(1) + "x" : "—", color: "text-slate-300" },
+            { label: "Score",  value: (h.rec_score > 0 ? "+" : "") + h.rec_score, color: h.rec_score >= 28 ? "text-gain" : h.rec_score >= -8 ? "text-amber-400" : "text-loss" },
+          ].map(({ label, value, color }) => (
+            <div key={label} className="bg-black/20 rounded-lg p-1.5 text-center">
+              <p className={cn("text-xs font-bold font-mono", color)}>{value}</p>
+              <p className="text-[9px] text-slate-600 uppercase tracking-wider">{label}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Key reasons */}
+        <div className="space-y-1">
+          {h.rec_reasons.slice(0, 3).map((r, i) => (
+            <div key={i} className="flex items-start gap-1.5">
+              <ChevronRight className={cn("w-3 h-3 shrink-0 mt-px", accentColor)} />
+              <p className="text-[11px] text-slate-400 leading-snug">{r}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* "What to do" label + breakdown toggle */}
+        <div className="flex items-center gap-2">
+          <div className={cn("flex-1 text-center text-[10px] font-semibold uppercase tracking-widest rounded-lg py-1.5 border", meta.bg, meta.border)}>
+            <span className={accentColor}>{meta.label}</span>
+          </div>
+          <button
+            onClick={() => setShowBreakdown(!showBreakdown)}
+            className={cn(
+              "flex items-center gap-1 px-2 py-1.5 rounded-lg border text-[10px] font-semibold transition-colors",
+              showBreakdown ? "bg-accent-blue/20 border-accent-blue/30 text-accent-blue" : "border-white/[0.08] text-slate-500 hover:text-slate-300"
+            )}
+          >
+            Score breakdown
+            <ChevronDown className={cn("w-3 h-3 transition-transform", showBreakdown && "rotate-180")} />
+          </button>
         </div>
       </div>
 
-      {/* 52W range */}
-      <Range52W price={h.price} low={h.week_52_low} high={h.week_52_high} />
-
-      {/* Stats row */}
-      <div className="grid grid-cols-3 gap-1.5">
-        {[
-          { label: "Total Gain", value: formatPct(h.gain_pct), color: gainColor(h.gain_pct) },
-          { label: "Alpha",      value: formatPct(h.alpha * 100), color: gainColor(h.alpha) },
-          { label: "P/E",        value: h.pe_ratio ? h.pe_ratio.toFixed(1) + "x" : "—", color: "text-slate-300" },
-        ].map(({ label, value, color }) => (
-          <div key={label} className="bg-black/20 rounded-lg p-1.5 text-center">
-            <p className={cn("text-xs font-bold font-mono", color)}>{value}</p>
-            <p className="text-[9px] text-slate-600 uppercase tracking-wider">{label}</p>
-          </div>
-        ))}
-      </div>
-
-      {/* Reasons */}
-      <div className="space-y-1">
-        {h.rec_reasons.slice(0, 3).map((r, i) => (
-          <div key={i} className="flex items-start gap-1.5">
-            <ChevronRight className={cn("w-3 h-3 shrink-0 mt-px", REC_STYLES[h.recommendation].split(" ")[1])} />
-            <p className="text-[11px] text-slate-400 leading-snug">{r}</p>
-          </div>
-        ))}
-      </div>
-
-      {/* Action label */}
-      <div className={cn("text-center text-[10px] font-semibold uppercase tracking-widest rounded-lg py-1.5 border", meta.bg, meta.border)}>
-        <span className={REC_STYLES[h.recommendation].split(" ")[1]}>{meta.label}</span>
-      </div>
+      {/* Score breakdown panel */}
+      <AnimatePresence>
+        {showBreakdown && h.rec_breakdown && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.25 }}
+            className="overflow-hidden border-t border-white/[0.06]"
+          >
+            <div className="p-3.5 bg-black/20">
+              <ScoreBreakdown
+                breakdown={h.rec_breakdown}
+                score={h.rec_score}
+                recommendation={h.recommendation}
+                nextTier={h.rec_next_tier}
+                nextPts={h.rec_next_pts}
+                delay={0}
+              />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
+  );
+}
+
+const FACTOR_GUIDE = [
+  { name: "Alpha vs S&P 500",       max: 35, desc: "How much the stock has beaten (or trailed) VOO since your purchase date. The single most important factor — consistent outperformance is a strong buy signal." },
+  { name: "52-Week Range Position", max: 20, desc: "Where the current price sits in its 52-week range. Near the low = potential value entry. Near the high = possible overextension." },
+  { name: "P/E Ratio",              max: 15, desc: "Trailing price-to-earnings. A low P/E (< 20) earns positive points. A very high P/E (> 70) penalises the score — unless growth justifies it." },
+  { name: "Today's Momentum",       max: 10, desc: "Today's price change. Strong upward momentum adds points; sharp sell-offs reduce the score. This factor resets daily." },
+  { name: "Beta / Volatility",      max: 10, desc: "Beta < 1 = less volatile than the market (positive). Beta > 1.7 = significantly more volatile (negative). High-beta stocks need stronger fundamentals." },
+  { name: "Market Cap",             max:  5, desc: "Mega/large-caps get a small bonus for liquidity and stability. Small/micro-caps are penalised for higher risk." },
+  { name: "52W High Distance",      max:  5, desc: "How far the stock trades below its 52-week high. A big gap means room to recover. Trading right at the high earns a small penalty." },
+];
+
+function ScoringGuide() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="bg-[#0a1628] border border-white/[0.07] rounded-xl overflow-hidden">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between px-4 py-3 text-left"
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">How scoring works</span>
+          <span className="text-[10px] text-slate-600">7 factors, score −75 to +75</span>
+        </div>
+        <ChevronDown className={cn("w-4 h-4 text-slate-600 transition-transform", open && "rotate-180")} />
+      </button>
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ height: 0 }}
+            animate={{ height: "auto" }}
+            exit={{ height: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden"
+          >
+            <div className="px-4 pb-4 space-y-3 border-t border-white/[0.05]">
+              {/* Threshold table */}
+              <div className="grid grid-cols-5 gap-2 mt-3">
+                {[
+                  { label: "STRONG BUY",  range: "≥ 55",  color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20" },
+                  { label: "BUY",         range: "≥ 28",  color: "text-green-400",   bg: "bg-green-500/10 border-green-500/20" },
+                  { label: "HOLD",        range: "≥ −8",  color: "text-amber-400",   bg: "bg-amber-500/10 border-amber-500/20" },
+                  { label: "SELL",        range: "≥ −28", color: "text-orange-400",  bg: "bg-orange-500/10 border-orange-500/20" },
+                  { label: "STRONG SELL", range: "< −28", color: "text-red-400",     bg: "bg-red-500/10 border-red-500/20" },
+                ].map(({ label, range, color, bg }) => (
+                  <div key={label} className={cn("rounded-lg border p-2 text-center", bg)}>
+                    <p className={cn("text-[10px] font-extrabold", color)}>{label}</p>
+                    <p className="text-[10px] text-slate-600 font-mono mt-0.5">{range}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Factor list */}
+              <div className="space-y-2 mt-2">
+                {FACTOR_GUIDE.map(({ name, max, desc }) => (
+                  <div key={name} className="flex gap-3">
+                    <div className="shrink-0 pt-0.5">
+                      <span className="text-[10px] font-bold text-accent-blue bg-accent-blue/10 border border-accent-blue/20 rounded px-1.5 py-0.5 font-mono">
+                        ±{max}
+                      </span>
+                    </div>
+                    <div>
+                      <p className="text-[11px] font-semibold text-slate-300">{name}</p>
+                      <p className="text-[10px] text-slate-500 leading-snug">{desc}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <p className="text-[10px] text-slate-700 border-t border-white/[0.04] pt-2 mt-2">
+                Scores are recomputed live on each page refresh. Not financial advice.
+              </p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 
@@ -145,6 +259,9 @@ export function RecommendationsPanel({ holdings, delay = 0 }: Props) {
       transition={{ delay }}
       className="space-y-4"
     >
+      {/* Scoring guide */}
+      <ScoringGuide />
+
       {/* Summary bar */}
       <div className="flex items-center gap-3 bg-[#0e1726] border border-white/[0.07] rounded-xl p-4">
         <div className="flex items-center gap-2 flex-1 flex-wrap">

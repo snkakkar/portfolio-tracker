@@ -21,7 +21,7 @@ export function RecBadge({ rec, small = false, reasons }: Props) {
       </span>
       {reasons && reasons.length > 0 && (
         <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-56">
-          <div className="bg-navy-950 border border-surface-border rounded-lg p-3 shadow-card">
+          <div className="bg-[#03060f] border border-white/[0.1] rounded-xl p-3 shadow-[0_8px_32px_rgba(0,0,0,0.6)]">
             <p className="text-[10px] uppercase tracking-widest text-slate-500 mb-1.5">Analysis</p>
             <ul className="space-y-1">
               {reasons.map((r, i) => (

@@ -1,6 +1,14 @@
 export type Recommendation = "STRONG BUY" | "BUY" | "HOLD" | "SELL" | "STRONG SELL";
 export type RecColor = "emerald" | "green" | "amber" | "orange" | "red";
 
+export interface ScoreFactorBreakdown {
+  points: number;
+  max: number;
+  reason: string;
+}
+
+export type RecBreakdown = Record<string, ScoreFactorBreakdown>;
+
 export interface Holding {
   ticker: string;
   name: string;
@@ -27,6 +35,9 @@ export interface Holding {
   rec_score: number;
   rec_color: RecColor;
   rec_reasons: string[];
+  rec_breakdown: RecBreakdown;
+  rec_next_tier: Recommendation | null;
+  rec_next_pts: number | null;
   portfolio?: string;
   portfolio_label?: string;
 }
@@ -82,16 +93,10 @@ export interface DiscoverStock {
   rec_score: number;
   rec_color: RecColor;
   rec_reasons: string[];
+  rec_breakdown: RecBreakdown;
+  rec_next_tier: Recommendation | null;
+  rec_next_pts: number | null;
 }
-
-export const PORTFOLIOS = [
-  { key: "stocks", label: "Brokerage Stocks", icon: "TrendingUp" },
-  { key: "etfs", label: "Brokerage ETFs", icon: "BarChart2" },
-  { key: "retirement_stocks", label: "Retirement Stocks", icon: "Shield" },
-  { key: "retirement_etfs", label: "Retirement ETFs", icon: "PieChart" },
-] as const;
-
-export type PortfolioKey = (typeof PORTFOLIOS)[number]["key"];
 
 export interface WatchItem {
   ticker: string;
@@ -115,4 +120,16 @@ export interface WatchItem {
   rec_score: number;
   rec_color: RecColor;
   rec_reasons: string[];
+  rec_breakdown: RecBreakdown;
+  rec_next_tier: Recommendation | null;
+  rec_next_pts: number | null;
 }
+
+export const PORTFOLIOS = [
+  { key: "stocks", label: "Brokerage Stocks", icon: "TrendingUp" },
+  { key: "etfs", label: "Brokerage ETFs", icon: "BarChart2" },
+  { key: "retirement_stocks", label: "Retirement Stocks", icon: "Shield" },
+  { key: "retirement_etfs", label: "Retirement ETFs", icon: "PieChart" },
+] as const;
+
+export type PortfolioKey = (typeof PORTFOLIOS)[number]["key"];

@@ -5,6 +5,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { cn, formatCurrency, formatPct, gainColor, gainBg, formatMarketCap } from "@/lib/utils";
 import { RecBadge } from "./RecBadge";
 import { PriceChart } from "./PriceChart";
+import { ScoreBreakdown } from "./ScoreBreakdown";
 import type { Holding } from "@/types";
 import { api } from "@/api/client";
 
@@ -165,7 +166,7 @@ export function HoldingsTable({ holdings, portfolio, onRefresh }: Props) {
                           value={editState.shares}
                           onChange={(e) => setEditState((s) => ({ ...s, shares: e.target.value }))}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-20 bg-navy-800 border border-accent-blue/40 rounded px-2 py-0.5 text-xs text-right text-white focus:outline-none focus:border-accent-blue"
+                          className="w-20 bg-[#0a1628] border border-accent-blue/40 rounded px-2 py-0.5 text-xs text-right text-white focus:outline-none focus:border-accent-blue"
                         />
                       ) : (
                         <span className="group/cell flex items-center justify-end gap-1">
@@ -183,7 +184,7 @@ export function HoldingsTable({ holdings, portfolio, onRefresh }: Props) {
                           value={editState.purchase_date}
                           onChange={(e) => setEditState((s) => ({ ...s, purchase_date: e.target.value }))}
                           onClick={(e) => e.stopPropagation()}
-                          className="bg-navy-800 border border-accent-blue/40 rounded px-2 py-0.5 text-xs text-white focus:outline-none focus:border-accent-blue"
+                          className="bg-[#0a1628] border border-accent-blue/40 rounded px-2 py-0.5 text-xs text-white focus:outline-none focus:border-accent-blue"
                         />
                       ) : (
                         <span className="group/cell flex items-center gap-1">
@@ -201,7 +202,7 @@ export function HoldingsTable({ holdings, portfolio, onRefresh }: Props) {
                           value={editState.cost_per_share}
                           onChange={(e) => setEditState((s) => ({ ...s, cost_per_share: e.target.value }))}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-24 bg-navy-800 border border-accent-blue/40 rounded px-2 py-0.5 text-xs text-right text-white focus:outline-none focus:border-accent-blue"
+                          className="w-24 bg-[#0a1628] border border-accent-blue/40 rounded px-2 py-0.5 text-xs text-right text-white focus:outline-none focus:border-accent-blue"
                         />
                       ) : (
                         formatCurrency(h.cost_per_share)
@@ -310,14 +311,14 @@ export function HoldingsTable({ holdings, portfolio, onRefresh }: Props) {
                         exit={{ opacity: 0 }}
                       >
                         <td colSpan={14} className="bg-[#090f1e] border-b border-white/[0.05] px-6 py-5">
-                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                             {/* Left: price chart */}
                             <div>
                               <p className="text-[10px] font-semibold text-slate-500 mb-3 uppercase tracking-widest">Price History</p>
                               <PriceChart ticker={h.ticker} />
                             </div>
 
-                            {/* Right: details */}
+                            {/* Middle: details */}
                             <div className="space-y-4">
                               {/* 52W range visual */}
                               {h.week_52_low && h.week_52_high && h.week_52_high > h.week_52_low && (
@@ -363,20 +364,14 @@ export function HoldingsTable({ holdings, portfolio, onRefresh }: Props) {
                                 </dl>
                               </div>
 
-                              {/* Recommendation with score + reasons */}
+                              {/* Compact rec reasons */}
                               <div className="rounded-xl bg-[#0e1726] border border-white/[0.07] p-3">
                                 <div className="flex items-center justify-between mb-2">
-                                  <p className="text-[10px] uppercase tracking-widest text-slate-500">Analysis</p>
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-[10px] text-slate-600">Score: </span>
-                                    <span className={cn("text-xs font-extrabold font-mono", h.rec_score >= 28 ? "text-gain" : h.rec_score >= -8 ? "text-amber-400" : "text-loss")}>
-                                      {h.rec_score > 0 ? "+" : ""}{h.rec_score}
-                                    </span>
-                                    <RecBadge rec={h.recommendation} small />
-                                  </div>
+                                  <p className="text-[10px] uppercase tracking-widest text-slate-500">Signals</p>
+                                  <RecBadge rec={h.recommendation} small />
                                 </div>
                                 <div className="space-y-1">
-                                  {h.rec_reasons.map((r, i) => (
+                                  {h.rec_reasons.slice(0, 5).map((r, i) => (
                                     <div key={i} className="flex items-start gap-1.5">
                                       <span className="text-slate-600 text-xs mt-px">›</span>
                                       <p className="text-[11px] text-slate-400 leading-snug">{r}</p>
@@ -384,6 +379,23 @@ export function HoldingsTable({ holdings, portfolio, onRefresh }: Props) {
                                   ))}
                                 </div>
                               </div>
+                            </div>
+
+                            {/* Right: score breakdown */}
+                            <div>
+                              <p className="text-[10px] font-semibold text-slate-500 mb-3 uppercase tracking-widest">Score Breakdown</p>
+                              {h.rec_breakdown ? (
+                                <ScoreBreakdown
+                                  breakdown={h.rec_breakdown}
+                                  score={h.rec_score}
+                                  recommendation={h.recommendation}
+                                  nextTier={h.rec_next_tier}
+                                  nextPts={h.rec_next_pts}
+                                  delay={0}
+                                />
+                              ) : (
+                                <p className="text-xs text-slate-600">No breakdown available</p>
+                              )}
                             </div>
                           </div>
                         </td>
