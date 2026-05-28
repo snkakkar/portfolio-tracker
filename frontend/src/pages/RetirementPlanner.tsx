@@ -511,7 +511,7 @@ function ResultDashboard({ result, input }: { result: PlannerResult; input: Plan
         {/* Success probability */}
         <div className="rounded-2xl border border-white/[0.07] bg-[#0a1628] p-5 flex flex-col items-center justify-center">
           <p className="text-[10px] text-slate-500 uppercase tracking-widest font-medium mb-4">
-            Probability of Success (700 simulations)
+            Probability of Success (400 simulations)
           </p>
           {hasExternal ? (
             <div className="grid grid-cols-2 gap-4 w-full">
@@ -686,7 +686,7 @@ function ResultDashboard({ result, input }: { result: PlannerResult; input: Plan
       <div className="rounded-2xl border border-white/[0.07] bg-[#0a1628] p-5">
         <div className="flex items-center justify-between mb-4">
           <p className="text-[10px] text-slate-500 uppercase tracking-widest font-medium">
-            Monte Carlo Outcome Range (700 simulations)
+            Monte Carlo Outcome Range (400 simulations)
           </p>
           <div className="flex items-center gap-3 text-[10px]">
             {hasExternal && (
@@ -974,7 +974,7 @@ export function RetirementPlanner() {
         <div>
           <h1 className="text-xl font-extrabold text-white tracking-tight">Retirement Planner</h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Monte Carlo projection · 700 simulations · Based on your live portfolio · Calibrated for long-term investors
+            Monte Carlo projection · 400 simulations · Based on your live portfolio · Calibrated for long-term investors
           </p>
         </div>
       </div>

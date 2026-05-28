@@ -154,3 +154,61 @@ def get_bulk_quotes(tickers: list[str]) -> dict[str, dict]:
             pass
 
     return {t: get_quote(t) for t in tickers}
+
+
+def get_prev_close_batch(tickers: list[str]) -> dict[str, float]:
+    """
+    Return previous-day closing prices for all tickers in a SINGLE batch download.
+    Much faster than N individual get_quote() calls — used by the retirement planner
+    where live intraday prices add no value to long-horizon projections.
+    Results are cached per ticker so subsequent calls within the TTL window are free.
+    """
+    cache_key_prefix = "prev_close:"
+    result: dict[str, float] = {}
+    missing: list[str] = []
+
+    for t in tickers:
+        cached = _cache_get(f"{cache_key_prefix}{t}")
+        if cached is not None:
+            result[t] = cached
+        else:
+            missing.append(t)
+
+    if missing:
+        try:
+            joined = " ".join(missing)
+            # Download 5 days so we always have at least one trading day regardless
+            # of weekends / holidays.
+            raw = yf.download(joined, period="5d", progress=False, auto_adjust=True)
+
+            close = raw["Close"] if "Close" in raw else raw
+
+            # yf.download returns a DataFrame with MultiIndex columns when there are
+            # multiple tickers, and a plain Series/DataFrame for a single ticker.
+            if len(missing) == 1:
+                ticker = missing[0]
+                if not close.empty:
+                    prev = float(close.iloc[-1])
+                else:
+                    prev = 0.0
+                _cache_set(f"{cache_key_prefix}{ticker}", prev)
+                result[ticker] = prev
+            else:
+                for ticker in missing:
+                    try:
+                        col = ticker.upper()
+                        series = close[col] if col in close.columns else close.get(ticker, None)
+                        if series is not None and not series.dropna().empty:
+                            prev = float(series.dropna().iloc[-1])
+                        else:
+                            prev = 0.0
+                    except Exception:
+                        prev = 0.0
+                    _cache_set(f"{cache_key_prefix}{ticker}", prev)
+                    result[ticker] = prev
+        except Exception:
+            # Fallback: zero for any ticker we couldn't fetch
+            for ticker in missing:
+                result[ticker] = 0.0
+
+    return result

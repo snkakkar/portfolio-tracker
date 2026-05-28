@@ -1,6 +1,7 @@
 import json
 import uuid
 from pathlib import Path
+from typing import Optional
 
 HOLDINGS_FILE = Path(__file__).parent / "holdings.json"
 
@@ -139,7 +140,7 @@ def exit_holding(
     return record
 
 
-def get_exited(portfolio: str | None = None) -> list[dict]:
+def get_exited(portfolio: Optional[str] = None) -> list[dict]:
     """Return exited positions, optionally filtered by portfolio."""
     data = load_holdings()
     _ensure_exited(data)

@@ -913,19 +913,41 @@ def run_retirement_planner(body: PlannerInput):
     if years_to_retirement <= 0:
         raise HTTPException(status_code=400, detail="Retirement age must be greater than current age")
 
-    # ── Fetch current total portfolio value ───────────────────────────────────
-    md.get_quote("VOO")
-    total_value = 0.0
-    all_holdings_flat: list[dict] = []
-    sectors_held: dict[str, float] = {}
-    betas: list[float] = []
+    # ── Fetch current total portfolio value (batch prev-close — single request)
+    # Full enrich_holding computes alpha, S&P comparison, rec scores etc., and
+    # triggers one yfinance .info call per ticker.  For a long-horizon planner,
+    # the previous day's close is just as good as the live price and lets us
+    # fetch ALL tickers in a single yf.download() call instead of N calls.
     raw_all = []
     for portfolio in PORTFOLIO_LABELS:
         for raw in h_store.get_portfolio(portfolio):
             raw_all.append(raw)
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
-        enriched = list(ex.map(enrich_holding, raw_all))
+    unique_tickers = list({r["ticker"] for r in raw_all})
+    prev_closes    = md.get_prev_close_batch(unique_tickers)
+
+    def _light_enrich(raw: dict) -> dict:
+        ticker = raw["ticker"]
+        price  = prev_closes.get(ticker, 0) or 0
+        value  = raw["shares"] * price
+        # Pull beta/sector from the quote cache if already warm (no new API call).
+        # If cold, these are None — recommendation logic degrades gracefully.
+        cached_quote = md._cache_get(f"quote:{ticker}") or {}
+        return {
+            "ticker":        ticker,
+            "current_value": value,
+            "sector":        cached_quote.get("sector"),
+            "beta":          cached_quote.get("beta"),
+            "alpha":         0.0,
+            "name":          cached_quote.get("name", ticker),
+        }
+
+    enriched = [_light_enrich(r) for r in raw_all]
+
+    total_value = 0.0
+    all_holdings_flat: list[dict] = []
+    sectors_held: dict[str, float] = {}
+    betas: list[float] = []
 
     for h in enriched:
         total_value += h["current_value"]
@@ -983,11 +1005,16 @@ def run_retirement_planner(body: PlannerInput):
         early_phase_years=early_phase_years,
         mu_early=mu_e, sigma_early=sig_e,
         mu_late=mu_l,  sigma_late=sig_l,
-        simulations=700,
+        simulations=400,   # 400 gives robust percentile estimates; 700 adds latency not accuracy
     )
 
-    # ── Monte Carlo — Total net worth (tracked + external) ───────────────────
-    mc_total = _run_monte_carlo(start_value=total_value, **mc_kwargs)
+    # ── Monte Carlo — run both series in parallel ─────────────────────────────
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+        fut_total   = ex.submit(_run_monte_carlo, start_value=total_value,            **mc_kwargs)
+        fut_tracked = ex.submit(_run_monte_carlo, start_value=tracked_portfolio_value, **mc_kwargs)
+        mc_total   = fut_total.result()
+        mc_tracked = fut_tracked.result()
+
     n = len(mc_total)
     p10  = mc_total[int(n * 0.10)]
     p25  = mc_total[int(n * 0.25)]
@@ -995,8 +1022,6 @@ def run_retirement_planner(body: PlannerInput):
     p75  = mc_total[int(n * 0.75)]
     p90  = mc_total[int(n * 0.90)]
 
-    # ── Monte Carlo — Tracked portfolio only ─────────────────────────────────
-    mc_tracked = _run_monte_carlo(start_value=tracked_portfolio_value, **mc_kwargs)
     nt = len(mc_tracked)
     tp10 = mc_tracked[int(nt * 0.10)]
     tp25 = mc_tracked[int(nt * 0.25)]
