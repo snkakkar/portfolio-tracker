@@ -1,4 +1,4 @@
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, useParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useLocation } from "react-router-dom";
 import { Layout } from "@/components/Layout";
@@ -7,6 +7,11 @@ import { PortfolioPage } from "@/pages/PortfolioPage";
 import { WatchlistPage } from "@/pages/WatchlistPage";
 import { RetirementPlanner } from "@/pages/RetirementPlanner";
 import ImportExportPage from "@/pages/ImportExportPage";
+
+function DynamicPortfolioPage() {
+  const { key } = useParams<{ key: string }>();
+  return <PortfolioPage portfolio={key ?? ""} />;
+}
 
 const pageVariants = {
   initial: { opacity: 0, y: 8 },
@@ -35,6 +40,8 @@ function AnimatedRoutes() {
           <Route path="/watchlist" element={<WatchlistPage />} />
           <Route path="/planner" element={<RetirementPlanner />} />
           <Route path="/import" element={<ImportExportPage />} />
+          {/* Dynamic route for custom portfolios */}
+          <Route path="/portfolio/:key" element={<DynamicPortfolioPage />} />
         </Routes>
       </motion.div>
     </AnimatePresence>

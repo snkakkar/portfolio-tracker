@@ -27,12 +27,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-PORTFOLIO_LABELS = {
-    "stocks": "Brokerage Stocks",
-    "etfs": "Brokerage ETFs",
-    "retirement_stocks": "Retirement Stocks",
-    "retirement_etfs": "Retirement ETFs",
-}
+def _get_portfolio_labels() -> dict[str, str]:
+    """Return {key: label} for all non-watchlist portfolios (built-in + custom)."""
+    try:
+        meta_list = h_store.get_all_portfolio_meta()
+        return {m["key"]: m["label"] for m in meta_list}
+    except Exception:
+        return {
+            "stocks": "Brokerage Stocks",
+            "etfs": "Brokerage ETFs",
+            "retirement_stocks": "Retirement Stocks",
+            "retirement_etfs": "Retirement ETFs",
+        }
+
+# Keep a module-level alias that reads dynamically where needed
+PORTFOLIO_LABELS = _get_portfolio_labels()
 
 # Watchlist is separate — not a portfolio, just stocks to monitor
 WATCHLIST_KEY = "watchlist"
@@ -157,9 +166,13 @@ def build_portfolio_summary(holdings: list[dict]) -> dict:
 
 @app.get("/api/portfolio/{portfolio}")
 def get_portfolio(portfolio: str):
-    if portfolio not in PORTFOLIO_LABELS:
+    labels = _get_portfolio_labels()
+    if portfolio not in labels:
         raise HTTPException(status_code=404, detail=f"Portfolio '{portfolio}' not found")
-    raw_holdings = h_store.get_portfolio(portfolio)
+    try:
+        raw_holdings = h_store.get_portfolio(portfolio)
+    except KeyError:
+        raw_holdings = []
 
     # Fetch VOO once
     md.get_quote("VOO")
@@ -168,9 +181,14 @@ def get_portfolio(portfolio: str):
         enriched = list(ex.map(enrich_holding, raw_holdings))
 
     summary = build_portfolio_summary(enriched)
+    portfolio_meta = next(
+        (m for m in h_store.get_all_portfolio_meta() if m["key"] == portfolio),
+        {"key": portfolio, "label": labels.get(portfolio, portfolio), "color": "blue", "builtin": False},
+    )
     return {
         "portfolio": portfolio,
-        "label": PORTFOLIO_LABELS[portfolio],
+        "label": labels.get(portfolio, portfolio),
+        "meta": portfolio_meta,
         "summary": summary,
         "holdings": enriched,
     }
@@ -184,25 +202,26 @@ def get_all_portfolios():
     md.get_quote("VOO")
 
     raw_all = []
-    for portfolio in PORTFOLIO_LABELS:
+    for portfolio in _get_portfolio_labels():
         for raw in h_store.get_portfolio(portfolio):
             raw_all.append((portfolio, raw))
 
     def enrich_with_portfolio(item):
         portfolio, raw = item
         enriched = enrich_holding(raw)
+        labels = _get_portfolio_labels()
         enriched["portfolio"] = portfolio
-        enriched["portfolio_label"] = PORTFOLIO_LABELS[portfolio]
+        enriched["portfolio_label"] = labels.get(portfolio, portfolio)
         return enriched
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=12) as ex:
         all_holdings = list(ex.map(enrich_with_portfolio, raw_all))
 
     per_portfolio = {}
-    for portfolio in PORTFOLIO_LABELS:
+    for portfolio in _get_portfolio_labels():
         ph = [h for h in all_holdings if h["portfolio"] == portfolio]
         per_portfolio[portfolio] = {
-            "label": PORTFOLIO_LABELS[portfolio],
+            "label": _get_portfolio_labels().get(portfolio, portfolio),
             "summary": build_portfolio_summary(ph),
             "holdings": ph,
         }
@@ -324,7 +343,7 @@ def add_to_watchlist(body: HoldingIn):
         if quote["price"] == 0:
             raise HTTPException(status_code=400, detail=f"Could not find ticker '{ticker}'")
         cost = quote["price"]
-    item = h_store.add_holding(WATCHLIST_KEY, ticker, body.shares or 0, cost, body.purchase_date)
+    item = h_store.add_holding(WATCHLIST_KEY, {"ticker": ticker, "shares": body.shares or 0, "cost_per_share": cost, "purchase_date": body.purchase_date})
     return item
 
 
@@ -340,7 +359,8 @@ def remove_from_watchlist(ticker: str):
 # ─── Holdings CRUD (portfolios only, not watchlist) ──────────────────────────
 
 def _require_portfolio(portfolio: str):
-    if portfolio not in PORTFOLIO_LABELS:
+    labels = _get_portfolio_labels()
+    if portfolio not in labels:
         raise HTTPException(status_code=404, detail="Portfolio not found")
 
 
@@ -362,7 +382,7 @@ def add_holding(portfolio: str, body: HoldingIn):
             raise HTTPException(status_code=400, detail=f"Could not find ticker '{ticker}'")
         cost = quote["price"]
 
-    holding = h_store.add_holding(portfolio, ticker, body.shares, cost, body.purchase_date)
+    holding = h_store.add_holding(portfolio, {"ticker": ticker, "shares": body.shares, "cost_per_share": cost, "purchase_date": body.purchase_date})
     return enrich_holding(holding)
 
 
@@ -385,6 +405,54 @@ def remove_holding(portfolio: str, ticker: str):
         return {"ok": True}
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+# ─── Portfolio metadata CRUD ──────────────────────────────────────────────────
+
+class PortfolioCreateIn(BaseModel):
+    label: str
+    color: str = "blue"
+
+
+class PortfolioUpdateIn(BaseModel):
+    label: Optional[str] = None
+    color: Optional[str] = None
+
+
+@app.get("/api/portfolios")
+def list_portfolios():
+    """Return metadata for all portfolios (built-in + custom)."""
+    return {"portfolios": h_store.get_all_portfolio_meta()}
+
+
+@app.post("/api/portfolios")
+def create_portfolio(body: PortfolioCreateIn):
+    """Create a new custom portfolio."""
+    try:
+        meta = h_store.create_portfolio(body.label, body.color)
+        return meta
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.put("/api/portfolios/{key}")
+def update_portfolio(key: str, body: PortfolioUpdateIn):
+    """Rename or recolour a portfolio."""
+    try:
+        meta = h_store.update_portfolio(key, body.label, body.color)
+        return meta
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.delete("/api/portfolios/{key}")
+def delete_portfolio(key: str):
+    """Delete a custom (non-built-in) portfolio."""
+    try:
+        h_store.delete_portfolio(key)
+        return {"ok": True}
+    except (KeyError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.get("/api/validate/{ticker}")
@@ -472,7 +540,7 @@ def discover_stocks():
     """
     # Collect all owned tickers
     owned: set[str] = set()
-    for portfolio in PORTFOLIO_LABELS:
+    for portfolio in _get_portfolio_labels():
         for h in h_store.get_portfolio(portfolio):
             owned.add(h["ticker"].upper())
     for h in h_store.get_portfolio(WATCHLIST_KEY):
@@ -925,7 +993,7 @@ def run_retirement_planner(body: PlannerInput):
     # the previous day's close is just as good as the live price and lets us
     # fetch ALL tickers in a single yf.download() call instead of N calls.
     raw_all = []
-    for portfolio in PORTFOLIO_LABELS:
+    for portfolio in _get_portfolio_labels():
         for raw in h_store.get_portfolio(portfolio):
             raw_all.append(raw)
 
@@ -1542,7 +1610,7 @@ def export_template(format: str = "csv"):
 def export_current(format: str = "csv"):
     """Export all current holdings as CSV or Excel."""
     all_rows = []
-    for portfolio_key in list(PORTFOLIO_LABELS.keys()) + ["watchlist"]:
+    for portfolio_key in list(_get_portfolio_labels().keys()) + ["watchlist"]:
         for h in h_store.get_portfolio(portfolio_key):
             all_rows.append({
                 "portfolio":      portfolio_key,

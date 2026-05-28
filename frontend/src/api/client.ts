@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { AllPortfoliosData, PortfolioData, PriceBar, WatchItem, DiscoverStock, PortfolioSuggestion, PlannerInput, PlannerResult, ExitedPosition, ImportRow } from "@/types";
+import type { AllPortfoliosData, PortfolioData, PriceBar, WatchItem, DiscoverStock, PortfolioSuggestion, PlannerInput, PlannerResult, ExitedPosition, ImportRow, PortfolioMeta } from "@/types";
 
 const BASE = "/api";
 
@@ -100,4 +100,17 @@ export const api = {
 
   exportCurrent: (format: "csv" | "xlsx") =>
     window.open(`${BASE}/export/current?format=${format}`, "_blank"),
+
+  // Portfolio management
+  listPortfolios: (): Promise<{ portfolios: PortfolioMeta[] }> =>
+    axios.get(`${BASE}/portfolios`).then((r) => r.data),
+
+  createPortfolio: (label: string, color: string): Promise<PortfolioMeta> =>
+    axios.post(`${BASE}/portfolios`, { label, color }).then((r) => r.data),
+
+  updatePortfolio: (key: string, label?: string, color?: string): Promise<PortfolioMeta> =>
+    axios.put(`${BASE}/portfolios/${key}`, { label, color }).then((r) => r.data),
+
+  deletePortfolio: (key: string): Promise<{ ok: boolean }> =>
+    axios.delete(`${BASE}/portfolios/${key}`).then((r) => r.data),
 };

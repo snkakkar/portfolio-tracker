@@ -8,6 +8,13 @@ export interface ImportRow {
   cost_per_share: number;
   purchase_date: string;
 }
+
+export interface PortfolioMeta {
+  key: string;
+  label: string;
+  color: string;
+  builtin: boolean;
+}
 export type RecColor = "emerald" | "green" | "amber" | "orange" | "red";
 
 export interface ScoreFactorBreakdown {
