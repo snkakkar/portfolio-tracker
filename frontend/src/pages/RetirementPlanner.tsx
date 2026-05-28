@@ -920,15 +920,33 @@ function ResultDashboard({ result, input }: { result: PlannerResult; input: Plan
 
 // ─── main page ────────────────────────────────────────────────────────────────
 
+const STORAGE_KEY = "retirement_planner_input";
+
+function loadSaved(): PlannerInput {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return DEFAULT_INPUT;
+    const parsed = JSON.parse(raw) as Partial<PlannerInput>;
+    // Merge with DEFAULT_INPUT so new fields added later always have a value
+    return { ...DEFAULT_INPUT, ...parsed };
+  } catch {
+    return DEFAULT_INPUT;
+  }
+}
+
 export function RetirementPlanner() {
-  const [input, setInput] = useState<PlannerInput>(DEFAULT_INPUT);
+  const [input, setInput] = useState<PlannerInput>(loadSaved);
   const [result, setResult] = useState<PlannerResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasRun, setHasRun] = useState(false);
 
   function handleChange(k: keyof PlannerInput, v: number | string | null) {
-    setInput(prev => ({ ...prev, [k]: v }));
+    setInput(prev => {
+      const next = { ...prev, [k]: v };
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch { /* quota */ }
+      return next;
+    });
   }
 
   async function handleRun() {
