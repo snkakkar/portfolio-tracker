@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Pencil, Trash2, Check, X, ChevronUp, ChevronDown } from "lucide-react";
+import { Pencil, Trash2, Check, X, ChevronUp, ChevronDown, Eye, EyeOff } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { cn, formatCurrency, formatPct, gainColor, gainBg, formatMarketCap } from "@/lib/utils";
 import { RecBadge } from "./RecBadge";
@@ -15,6 +15,8 @@ interface Props {
   holdings: Holding[];
   portfolio: string;
   onRefresh: () => void;
+  excluded?: Set<string>;
+  onToggleExclude?: (ticker: string) => void;
 }
 
 interface EditState {
@@ -24,7 +26,7 @@ interface EditState {
   cost_per_share: string;
 }
 
-export function HoldingsTable({ holdings, portfolio, onRefresh }: Props) {
+export function HoldingsTable({ holdings, portfolio, onRefresh, excluded = new Set(), onToggleExclude }: Props) {
   const qc = useQueryClient();
   const [sortKey, setSortKey] = useState<SortKey>("current_value");
   const [sortAsc, setSortAsc] = useState(false);
@@ -123,14 +125,18 @@ export function HoldingsTable({ holdings, portfolio, onRefresh }: Props) {
             <th className="px-3 py-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-center">
               Rec.
             </th>
+            <th className="px-3 py-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500 text-center w-8" title="Exclude from analysis">
+              <EyeOff className="w-3 h-3 mx-auto" />
+            </th>
             <th className="px-3 py-3 w-16" />
           </tr>
         </thead>
         <tbody>
           <AnimatePresence initial={false}>
             {sorted.map((h, idx) => {
-              const isEditing = editRow === h.ticker;
+              const isEditing  = editRow === h.ticker;
               const isExpanded = expandedRow === h.ticker;
+              const isExcluded = excluded.has(h.ticker);
 
               return (
                 <>
@@ -138,14 +144,15 @@ export function HoldingsTable({ holdings, portfolio, onRefresh }: Props) {
                     key={h.ticker}
                     layout
                     initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
+                    animate={{ opacity: isExcluded ? 0.35 : 1 }}
                     exit={{ opacity: 0 }}
                     onClick={() => !isEditing && setExpandedRow(isExpanded ? null : h.ticker)}
                     className={cn(
                       "border-b border-white/[0.04] transition-colors cursor-pointer",
                       idx % 2 === 0 ? "bg-[#0a1220]" : "bg-[#080e1a]",
                       "hover:bg-accent-blue/[0.06]",
-                      isExpanded && "bg-accent-blue/[0.08] border-accent-blue/10"
+                      isExpanded && "bg-accent-blue/[0.08] border-accent-blue/10",
+                      isExcluded && "saturate-0"
                     )}
                   >
                     {/* Ticker */}
@@ -253,6 +260,24 @@ export function HoldingsTable({ holdings, portfolio, onRefresh }: Props) {
                       <RecBadge rec={h.recommendation} small reasons={h.rec_reasons} />
                     </td>
 
+                    {/* Exclude toggle */}
+                    <td className="px-3 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                      {onToggleExclude && (
+                        <button
+                          onClick={() => onToggleExclude(h.ticker)}
+                          title={isExcluded ? "Re-include in analysis" : "Exclude from analysis"}
+                          className={cn(
+                            "w-6 h-6 flex items-center justify-center rounded mx-auto transition-colors",
+                            isExcluded
+                              ? "bg-amber-500/20 text-amber-400 hover:bg-amber-500/30"
+                              : "bg-slate-700/50 text-slate-500 hover:bg-amber-500/10 hover:text-amber-400"
+                          )}
+                        >
+                          {isExcluded ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                        </button>
+                      )}
+                    </td>
+
                     {/* Actions */}
                     <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-1">
@@ -310,7 +335,7 @@ export function HoldingsTable({ holdings, portfolio, onRefresh }: Props) {
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
                       >
-                        <td colSpan={14} className="bg-[#090f1e] border-b border-white/[0.05] px-6 py-5">
+                        <td colSpan={15} className="bg-[#090f1e] border-b border-white/[0.05] px-6 py-5">
                           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                             {/* Left: price chart */}
                             <div>

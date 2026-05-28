@@ -2,9 +2,9 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
-  DollarSign, TrendingUp, TrendingDown, Activity, Plus, RefreshCw,
+  DollarSign, TrendingUp, Activity, Plus, RefreshCw,
   BarChart2, Award, LayoutGrid, Target, ArrowUpRight, ArrowDownRight,
-  Calendar, Layers,
+  Layers, EyeOff, X,
 } from "lucide-react";
 import { api } from "@/api/client";
 import { SummaryCard } from "@/components/SummaryCard";
@@ -36,6 +36,15 @@ export function PortfolioPage({ portfolio }: Props) {
   const [showAdd, setShowAdd] = useState(false);
   const [chartView, setChartView] = useState<"gain" | "alpha">("gain");
   const [activeTab, setActiveTab] = useState<Tab>("overview");
+  const [excluded, setExcluded] = useState<Set<string>>(new Set());
+
+  function toggleExclude(ticker: string) {
+    setExcluded((prev) => {
+      const next = new Set(prev);
+      next.has(ticker) ? next.delete(ticker) : next.add(ticker);
+      return next;
+    });
+  }
 
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ["portfolio", portfolio],
@@ -59,21 +68,36 @@ export function PortfolioPage({ portfolio }: Props) {
 
   const summary = data?.summary;
   const holdings = data?.holdings ?? [];
+  const hasExclusions = excluded.size > 0;
 
-  const sorted = [...holdings].sort((a, b) => b.gain_pct - a.gain_pct);
+  // Active = all holdings minus temporarily excluded ones
+  const activeHoldings = holdings.filter((h) => !excluded.has(h.ticker));
+
+  const sorted = [...activeHoldings].sort((a, b) => b.gain_pct - a.gain_pct);
   const topPerformers   = sorted.slice(0, 5);
   const worstPerformers = sorted.slice(-5).reverse();
 
-  const totalValue = holdings.reduce((s, h) => s + h.current_value, 0);
-  const winners = holdings.filter((h) => h.gain > 0).length;
-  const winRate = holdings.length ? (winners / holdings.length) * 100 : 0;
+  // Recompute summary stats from active holdings when exclusions are applied
+  const activeTotalValue  = activeHoldings.reduce((s, h) => s + h.current_value, 0);
+  const activeTotalCost   = activeHoldings.reduce((s, h) => s + h.shares * h.cost_per_share, 0);
+  const activeTotalGain   = activeTotalValue - activeTotalCost;
+  const activeGainPct     = activeTotalCost > 0 ? (activeTotalGain / activeTotalCost) * 100 : 0;
+  const activeTodayGain   = activeHoldings.reduce((s, h) => s + h.shares * h.change, 0);
+  const winners = activeHoldings.filter((h) => h.gain > 0).length;
+  const winRate = activeHoldings.length ? (winners / activeHoldings.length) * 100 : 0;
 
-  // Quick stats for the strip
-  const todayUp   = holdings.filter((h) => h.change > 0).length;
-  const todayDown = holdings.filter((h) => h.change < 0).length;
-  const avgAlpha  = holdings.length ? holdings.reduce((s, h) => s + h.alpha * 100, 0) / holdings.length : 0;
-  const buys      = holdings.filter((h) => h.recommendation === "STRONG BUY" || h.recommendation === "BUY").length;
-  const sells     = holdings.filter((h) => h.recommendation === "SELL" || h.recommendation === "STRONG SELL").length;
+  const displayTotalValue  = hasExclusions ? activeTotalValue  : (summary?.total_value  ?? 0);
+  const displayTotalGain   = hasExclusions ? activeTotalGain   : (summary?.total_gain   ?? 0);
+  const displayGainPct     = hasExclusions ? activeGainPct     : (summary?.gain_pct     ?? 0);
+  const displayTodayGain   = hasExclusions ? activeTodayGain   : (summary?.todays_gain  ?? 0);
+  const displayTotalCost   = hasExclusions ? activeTotalCost   : (summary?.total_cost   ?? 0);
+
+  // Quick stats for the strip (always from active holdings)
+  const todayUp   = activeHoldings.filter((h) => h.change > 0).length;
+  const todayDown = activeHoldings.filter((h) => h.change < 0).length;
+  const avgAlpha  = activeHoldings.length ? activeHoldings.reduce((s, h) => s + h.alpha * 100, 0) / activeHoldings.length : 0;
+  const buys      = activeHoldings.filter((h) => h.recommendation === "STRONG BUY" || h.recommendation === "BUY").length;
+  const sells     = activeHoldings.filter((h) => h.recommendation === "SELL" || h.recommendation === "STRONG SELL").length;
 
   return (
     <div className="p-6 max-w-[1600px] mx-auto space-y-5">
@@ -104,6 +128,32 @@ export function PortfolioPage({ portfolio }: Props) {
         </div>
       </div>
 
+      {/* Exclusion banner */}
+      {hasExclusions && (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/25"
+        >
+          <div className="flex items-center gap-2 text-sm">
+            <EyeOff className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            <span className="text-amber-300 font-semibold">
+              {excluded.size} position{excluded.size !== 1 ? "s" : ""} excluded from analysis:
+            </span>
+            <span className="text-amber-400/70 font-mono text-xs">
+              {[...excluded].join(", ")}
+            </span>
+          </div>
+          <button
+            onClick={() => setExcluded(new Set())}
+            className="flex items-center gap-1.5 text-xs text-amber-400 hover:text-amber-200 transition-colors shrink-0"
+          >
+            <X className="w-3 h-3" />
+            Clear all
+          </button>
+        </motion.div>
+      )}
+
       {/* Summary cards — always visible */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {isLoading ? (
@@ -111,10 +161,10 @@ export function PortfolioPage({ portfolio }: Props) {
         ) : (
           <>
             <SummaryCard
-              label="Total Value"
-              value={summary?.total_value ?? 0}
+              label={hasExclusions ? "Active Value" : "Total Value"}
+              value={displayTotalValue}
               valueType="currency"
-              sub2={`Cost basis ${formatCurrency(summary?.total_cost ?? 0)}`}
+              sub2={`Cost basis ${formatCurrency(displayTotalCost)}`}
               icon={DollarSign}
               delay={0}
               accent
@@ -122,31 +172,31 @@ export function PortfolioPage({ portfolio }: Props) {
               iconBg="bg-accent-blue/20"
             />
             <SummaryCard
-              label="Total Gain"
-              value={summary?.total_gain ?? 0}
+              label={hasExclusions ? "Active Gain" : "Total Gain"}
+              value={displayTotalGain}
               valueType="currency"
-              sub={formatPct(summary?.gain_pct ?? 0)}
+              sub={formatPct(displayGainPct)}
               icon={TrendingUp}
-              trend={summary?.total_gain}
+              trend={displayTotalGain}
               delay={0.05}
-              iconColor={summary?.total_gain! >= 0 ? "text-gain" : "text-loss"}
-              iconBg={summary?.total_gain! >= 0 ? "bg-gain/10" : "bg-loss/10"}
+              iconColor={displayTotalGain >= 0 ? "text-gain" : "text-loss"}
+              iconBg={displayTotalGain >= 0 ? "bg-gain/10" : "bg-loss/10"}
             />
             <SummaryCard
               label="Today's Gain"
-              value={summary?.todays_gain ?? 0}
+              value={displayTodayGain}
               valueType="currency"
-              sub={holdings.length ? `${holdings.filter((h) => h.change > 0).length}↑  ${holdings.filter((h) => h.change < 0).length}↓` : undefined}
+              sub={activeHoldings.length ? `${todayUp}↑  ${todayDown}↓` : undefined}
               icon={Activity}
-              trend={summary?.todays_gain}
+              trend={displayTodayGain}
               delay={0.1}
-              iconColor={summary?.todays_gain! >= 0 ? "text-gain" : "text-loss"}
-              iconBg={summary?.todays_gain! >= 0 ? "bg-gain/10" : "bg-loss/10"}
+              iconColor={displayTodayGain >= 0 ? "text-gain" : "text-loss"}
+              iconBg={displayTodayGain >= 0 ? "bg-gain/10" : "bg-loss/10"}
             />
             <SummaryCard
               label="Win Rate"
               value={`${winRate.toFixed(0)}%`}
-              sub={`${winners} of ${holdings.length} positions profitable`}
+              sub={`${winners} of ${activeHoldings.length} positions profitable`}
               icon={Award}
               delay={0.15}
               iconColor={winRate >= 60 ? "text-amber-400" : "text-slate-400"}
@@ -177,7 +227,7 @@ export function PortfolioPage({ portfolio }: Props) {
       )}
 
       {/* === OVERVIEW TAB === */}
-      {activeTab === "overview" && !isLoading && holdings.length > 0 && (
+      {activeTab === "overview" && !isLoading && activeHoldings.length > 0 && (
         <div className="space-y-5">
 
           {/* Quick stats strip */}
@@ -192,7 +242,7 @@ export function PortfolioPage({ portfolio }: Props) {
               { label: "Avg Alpha", value: `${avgAlpha >= 0 ? "+" : ""}${avgAlpha.toFixed(1)}%`, color: gainColor(avgAlpha), bg: "bg-white/[0.04] border-white/[0.07]" },
               { label: "Buy signals",  value: `${buys}`,  color: "text-gain",  bg: "bg-gain/10 border-gain/20" },
               { label: "Sell signals", value: `${sells}`, color: "text-loss",  bg: sells > 0 ? "bg-loss/10 border-loss/20" : "bg-white/[0.04] border-white/[0.07]" },
-              { label: "Positions",    value: `${holdings.length}`, color: "text-slate-300", bg: "bg-white/[0.04] border-white/[0.07]" },
+              { label: "Positions",    value: hasExclusions ? `${activeHoldings.length}/${holdings.length}` : `${holdings.length}`, color: "text-slate-300", bg: "bg-white/[0.04] border-white/[0.07]" },
             ].map(({ label, value, color, bg }) => (
               <div key={label} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs ${bg}`}>
                 <span className="text-slate-500">{label}:</span>
@@ -211,9 +261,9 @@ export function PortfolioPage({ portfolio }: Props) {
             >
               <div className="flex items-center justify-between mb-4">
                 <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Allocation</p>
-                <span className="text-[10px] text-slate-600">{holdings.length} positions</span>
+                <span className="text-[10px] text-slate-600">{activeHoldings.length} positions</span>
               </div>
-              <PortfolioPieChart holdings={holdings} />
+              <PortfolioPieChart holdings={activeHoldings} />
             </motion.div>
 
             <motion.div
@@ -243,7 +293,7 @@ export function PortfolioPage({ portfolio }: Props) {
                   ))}
                 </div>
               </div>
-              <GainBarChart holdings={holdings} metric={chartView === "gain" ? "gain_pct" : "alpha"} />
+              <GainBarChart holdings={activeHoldings} metric={chartView === "gain" ? "gain_pct" : "alpha"} />
             </motion.div>
           </div>
 
@@ -345,12 +395,14 @@ export function PortfolioPage({ portfolio }: Props) {
                 <Layers className="w-3.5 h-3.5 text-slate-500" />
                 <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">All Positions</p>
               </div>
-              <p className="text-[10px] text-slate-600">Click row to expand · Click headers to sort</p>
+              <p className="text-[10px] text-slate-600">Click row to expand · Click headers to sort · Eye icon to exclude</p>
             </div>
             <HoldingsTable
               holdings={holdings}
               portfolio={portfolio}
               onRefresh={() => qc.invalidateQueries({ queryKey: ["portfolio", portfolio] })}
+              excluded={excluded}
+              onToggleExclude={toggleExclude}
             />
           </div>
         </div>
@@ -358,12 +410,12 @@ export function PortfolioPage({ portfolio }: Props) {
 
       {/* === ANALYTICS TAB === */}
       {activeTab === "analytics" && !isLoading && (
-        <MetricsPanel holdings={holdings} delay={0.05} />
+        <MetricsPanel holdings={activeHoldings} delay={0.05} />
       )}
 
       {/* === RECOMMENDATIONS TAB === */}
       {activeTab === "recommendations" && !isLoading && (
-        <RecommendationsPanel holdings={holdings} delay={0.05} />
+        <RecommendationsPanel holdings={activeHoldings} delay={0.05} />
       )}
 
       {/* Loading state for tabs */}
