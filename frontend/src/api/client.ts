@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { AllPortfoliosData, PortfolioData, PriceBar, WatchItem, DiscoverStock, PortfolioSuggestion, PlannerInput, PlannerResult, ExitedPosition } from "@/types";
+import type { AllPortfoliosData, PortfolioData, PriceBar, WatchItem, DiscoverStock, PortfolioSuggestion, PlannerInput, PlannerResult, ExitedPosition, ImportRow } from "@/types";
 
 const BASE = "/api";
 
@@ -79,4 +79,25 @@ export const api = {
     owned_count: number;
     universe_size: number;
   }> => axios.get(`${BASE}/discover`).then((r) => r.data),
+
+  // Import / Export
+  importPreview: (file: File): Promise<{ rows: ImportRow[]; errors: string[]; total: number }> => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return axios.post(`${BASE}/import/preview`, fd).then((r) => r.data);
+  },
+
+  importConfirm: (file: File, mode: "merge" | "replace"): Promise<{
+    added: string[]; skipped: string[]; errors: string[]; message: string;
+  }> => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return axios.post(`${BASE}/import/confirm?mode=${mode}`, fd).then((r) => r.data);
+  },
+
+  exportTemplate: (format: "csv" | "xlsx") =>
+    window.open(`${BASE}/export/template?format=${format}`, "_blank"),
+
+  exportCurrent: (format: "csv" | "xlsx") =>
+    window.open(`${BASE}/export/current?format=${format}`, "_blank"),
 };

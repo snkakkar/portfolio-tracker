@@ -1,7 +1,7 @@
 import { NavLink } from "react-router-dom";
 import {
   LayoutDashboard, TrendingUp, BarChart2, Shield, PieChart, Eye,
-  Zap, Circle, Calculator,
+  Zap, Circle, Calculator, ArrowUpDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -19,6 +19,7 @@ const WATCH_NAV = [
 
 const TOOLS_NAV = [
   { to: "/planner", label: "Retirement Planner", icon: Calculator },
+  { to: "/import",  label: "Import / Export",    icon: ArrowUpDown },
 ];
 
 function NavItem({

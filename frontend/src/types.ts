@@ -1,4 +1,13 @@
 export type Recommendation = "STRONG BUY" | "BUY" | "HOLD" | "SELL" | "STRONG SELL";
+
+export interface ImportRow {
+  portfolio: string;
+  brokerage: string;
+  ticker: string;
+  shares: number;
+  cost_per_share: number;
+  purchase_date: string;
+}
 export type RecColor = "emerald" | "green" | "amber" | "orange" | "red";
 
 export interface ScoreFactorBreakdown {

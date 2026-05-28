@@ -1,11 +1,17 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timedelta
 import concurrent.futures
 import math
 import random
+import csv
+import io
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 
 import holdings as h_store
 import market_data as md
@@ -1272,4 +1278,385 @@ def run_retirement_planner(body: PlannerInput):
             "inflation_rate": f"{inflation*100:.1f}%",
             "withdrawal_rate": "4.0% (SWR)",
         },
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Import / Export
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Canonical portfolio keys and their display names + aliases people might type
+_PORTFOLIO_ALIASES: dict[str, str] = {
+    "stocks":               "stocks",
+    "brokerage stocks":     "stocks",
+    "brokerage stock":      "stocks",
+    "stock":                "stocks",
+    "etfs":                 "etfs",
+    "brokerage etfs":       "etfs",
+    "brokerage etf":        "etfs",
+    "etf":                  "etfs",
+    "retirement stocks":    "retirement_stocks",
+    "retirement stock":     "retirement_stocks",
+    "retirement_stocks":    "retirement_stocks",
+    "retirement etfs":      "retirement_etfs",
+    "retirement etf":       "retirement_etfs",
+    "retirement_etfs":      "retirement_etfs",
+    "watchlist":            "watchlist",
+    "watch list":           "watchlist",
+    "watch":                "watchlist",
+}
+
+_TEMPLATE_PORTFOLIOS = [
+    "Stocks",
+    "ETFs",
+    "Retirement Stocks",
+    "Retirement ETFs",
+    "Watchlist",
+]
+
+_TEMPLATE_ROWS = [
+    # portfolio,            brokerage,   ticker, shares, cost_per_share, purchase_date
+    ("Stocks",             "Fidelity",  "AAPL",  10,     150.00,  "2022-01-15"),
+    ("Stocks",             "Fidelity",  "NVDA",   5,     400.00,  "2023-06-01"),
+    ("ETFs",               "Schwab",    "VOO",   20,     450.00,  "2021-03-10"),
+    ("ETFs",               "Schwab",    "QQQ",   10,     350.00,  "2021-03-10"),
+    ("Retirement Stocks",  "Fidelity 401k", "MSFT", 8,  280.00,  "2020-05-20"),
+    ("Retirement ETFs",    "Fidelity 401k", "VTI", 15,  180.00,  "2020-05-20"),
+    ("Watchlist",          "",          "TSLA",   0,     200.00,  "2024-01-01"),
+]
+
+_CSV_HEADERS = ["portfolio", "brokerage", "ticker", "shares", "cost_per_share", "purchase_date"]
+
+
+def _parse_upload_rows(content: bytes, filename: str) -> list[dict]:
+    """
+    Parse uploaded CSV or Excel into a list of validated row dicts.
+    Returns list of dicts with keys: portfolio, brokerage, ticker, shares,
+    cost_per_share, purchase_date.  Raises HTTPException on fatal parse errors.
+    """
+    rows: list[dict] = []
+    errors: list[str] = []
+
+    if filename.lower().endswith((".xlsx", ".xls")):
+        wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+        ws = wb.active
+        raw_rows = list(ws.iter_rows(values_only=True))
+    else:
+        text = content.decode("utf-8-sig", errors="replace")
+        reader = csv.reader(io.StringIO(text))
+        raw_rows = list(reader)
+
+    if not raw_rows:
+        raise HTTPException(status_code=400, detail="File is empty")
+
+    # Find header row — first row that contains 'ticker'
+    header_idx = None
+    for i, row in enumerate(raw_rows):
+        row_lower = [str(c).strip().lower() if c is not None else "" for c in row]
+        if "ticker" in row_lower:
+            header_idx = i
+            break
+
+    if header_idx is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not find a header row with 'ticker'. "
+                   "Make sure your file uses the Portfolio Tracker template.",
+        )
+
+    headers = [str(c).strip().lower() if c is not None else "" for c in raw_rows[header_idx]]
+
+    def col(row_vals: tuple, name: str):
+        try:
+            idx = headers.index(name)
+            v = row_vals[idx]
+            return v if v is not None else ""
+        except (ValueError, IndexError):
+            return ""
+
+    for line_no, row in enumerate(raw_rows[header_idx + 1:], start=header_idx + 2):
+        if not any(c for c in row if c is not None and str(c).strip()):
+            continue  # skip blank rows
+
+        ticker_raw  = str(col(row, "ticker")).strip().upper()
+        portfolio_raw = str(col(row, "portfolio")).strip().lower()
+        brokerage   = str(col(row, "brokerage")).strip()
+        shares_raw  = col(row, "shares")
+        cost_raw    = col(row, "cost_per_share")
+        date_raw    = col(row, "purchase_date")
+
+        if not ticker_raw:
+            continue  # blank ticker = skip silently
+
+        # Map portfolio alias → canonical key
+        portfolio_key = _PORTFOLIO_ALIASES.get(portfolio_raw)
+        if not portfolio_key:
+            errors.append(f"Row {line_no}: unknown portfolio '{portfolio_raw}' for {ticker_raw} — "
+                          f"use one of: Stocks, ETFs, Retirement Stocks, Retirement ETFs, Watchlist")
+            continue
+
+        # Shares
+        try:
+            shares = float(str(shares_raw).replace(",", ""))
+        except (ValueError, TypeError):
+            shares = 0.0
+
+        # Cost per share
+        try:
+            cost = float(str(cost_raw).replace(",", "").replace("$", ""))
+        except (ValueError, TypeError):
+            errors.append(f"Row {line_no}: invalid cost_per_share '{cost_raw}' for {ticker_raw}")
+            continue
+
+        # Purchase date
+        date_str = ""
+        if isinstance(date_raw, datetime):
+            date_str = date_raw.strftime("%Y-%m-%d")
+        else:
+            raw = str(date_raw).strip()
+            for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y", "%d/%m/%Y"):
+                try:
+                    date_str = datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
+                    break
+                except ValueError:
+                    continue
+            if not date_str:
+                errors.append(f"Row {line_no}: cannot parse purchase_date '{date_raw}' for {ticker_raw}. "
+                              f"Use YYYY-MM-DD format.")
+                continue
+
+        rows.append({
+            "portfolio":      portfolio_key,
+            "brokerage":      brokerage,
+            "ticker":         ticker_raw,
+            "shares":         shares,
+            "cost_per_share": cost,
+            "purchase_date":  date_str,
+        })
+
+    return rows, errors
+
+
+@app.get("/api/export/template")
+def export_template(format: str = "csv"):
+    """Download a blank import template (CSV or Excel)."""
+    if format == "xlsx":
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Portfolio Import"
+
+        # Styling
+        header_fill = PatternFill("solid", fgColor="1E3A5F")
+        header_font = Font(color="FFFFFF", bold=True, size=11)
+        example_fill = PatternFill("solid", fgColor="EBF3FB")
+        thin_border = Border(
+            left=Side(style="thin", color="CCCCCC"),
+            right=Side(style="thin", color="CCCCCC"),
+            top=Side(style="thin", color="CCCCCC"),
+            bottom=Side(style="thin", color="CCCCCC"),
+        )
+
+        # Header
+        headers_display = ["Portfolio", "Brokerage", "Ticker", "Shares", "Cost Per Share", "Purchase Date"]
+        col_widths = [22, 20, 10, 10, 18, 16]
+        for col_i, (h, w) in enumerate(zip(headers_display, col_widths), 1):
+            cell = ws.cell(row=1, column=col_i, value=h)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = thin_border
+            ws.column_dimensions[get_column_letter(col_i)].width = w
+
+        ws.row_dimensions[1].height = 22
+
+        # Instructions in a merged row above headers — insert at row 1, push headers to 2
+        ws.insert_rows(1)
+        ws.merge_cells("A1:F1")
+        instr = ws.cell(row=1, column=1,
+            value="Portfolio Tracker Import Template  —  Fill in your positions below. "
+                  "Portfolio must be one of: Stocks | ETFs | Retirement Stocks | Retirement ETFs | Watchlist")
+        instr.font = Font(italic=True, color="555555", size=10)
+        instr.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+        ws.row_dimensions[1].height = 28
+
+        # Headers now at row 2
+        for col_i, (h, w) in enumerate(zip(headers_display, col_widths), 1):
+            cell = ws.cell(row=2, column=col_i, value=h)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = thin_border
+
+        # Example rows starting at row 3
+        for r_i, row_data in enumerate(_TEMPLATE_ROWS, 3):
+            portfolio, brokerage, ticker, shares, cost, date = row_data
+            values = [portfolio, brokerage, ticker, shares, cost, date]
+            for c_i, v in enumerate(values, 1):
+                cell = ws.cell(row=r_i, column=c_i, value=v)
+                cell.fill = example_fill
+                cell.border = thin_border
+                cell.alignment = Alignment(horizontal="center")
+
+        # Add a "Valid Portfolios" helper sheet
+        ws2 = wb.create_sheet("Valid Portfolio Names")
+        ws2.column_dimensions["A"].width = 26
+        ws2.column_dimensions["B"].width = 40
+        ws2.cell(1, 1, "Portfolio Column Value").font = Font(bold=True)
+        ws2.cell(1, 2, "Meaning").font = Font(bold=True)
+        valid = [
+            ("Stocks",            "Brokerage / taxable account stocks"),
+            ("ETFs",              "Brokerage / taxable account ETFs"),
+            ("Retirement Stocks", "Retirement account stocks (401k/IRA)"),
+            ("Retirement ETFs",   "Retirement account ETFs (401k/IRA)"),
+            ("Watchlist",         "Watching only — not currently held"),
+        ]
+        for i, (name, desc) in enumerate(valid, 2):
+            ws2.cell(i, 1, name)
+            ws2.cell(i, 2, desc)
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return StreamingResponse(
+            buf,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": 'attachment; filename="portfolio_tracker_template.xlsx"'},
+        )
+
+    # Default: CSV
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(_CSV_HEADERS)
+    writer.writerow(["# Fill in your positions below. portfolio must be one of: "
+                     "Stocks | ETFs | Retirement Stocks | Retirement ETFs | Watchlist"])
+    writer.writerows(_TEMPLATE_ROWS)
+    output.seek(0)
+    return StreamingResponse(
+        io.BytesIO(output.getvalue().encode()),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="portfolio_tracker_template.csv"'},
+    )
+
+
+@app.get("/api/export/current")
+def export_current(format: str = "csv"):
+    """Export all current holdings as CSV or Excel."""
+    all_rows = []
+    for portfolio_key in list(PORTFOLIO_LABELS.keys()) + ["watchlist"]:
+        for h in h_store.get_portfolio(portfolio_key):
+            all_rows.append({
+                "portfolio":      portfolio_key,
+                "brokerage":      h.get("brokerage", ""),
+                "ticker":         h["ticker"],
+                "shares":         h["shares"],
+                "cost_per_share": h["cost_per_share"],
+                "purchase_date":  h.get("purchase_date", ""),
+            })
+
+    if format == "xlsx":
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Holdings Export"
+        header_fill = PatternFill("solid", fgColor="1E3A5F")
+        header_font = Font(color="FFFFFF", bold=True)
+        headers_display = ["Portfolio", "Brokerage", "Ticker", "Shares", "Cost Per Share", "Purchase Date"]
+        for c_i, h in enumerate(headers_display, 1):
+            cell = ws.cell(1, c_i, h)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center")
+        for r_i, row in enumerate(all_rows, 2):
+            ws.cell(r_i, 1, row["portfolio"])
+            ws.cell(r_i, 2, row["brokerage"])
+            ws.cell(r_i, 3, row["ticker"])
+            ws.cell(r_i, 4, row["shares"])
+            ws.cell(r_i, 5, row["cost_per_share"])
+            ws.cell(r_i, 6, row["purchase_date"])
+        for c_i, w in enumerate([22, 20, 10, 10, 18, 16], 1):
+            ws.column_dimensions[get_column_letter(c_i)].width = w
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return StreamingResponse(
+            buf,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": 'attachment; filename="my_portfolio_export.xlsx"'},
+        )
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=_CSV_HEADERS)
+    writer.writeheader()
+    writer.writerows(all_rows)
+    output.seek(0)
+    return StreamingResponse(
+        io.BytesIO(output.getvalue().encode()),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="my_portfolio_export.csv"'},
+    )
+
+
+class ImportPreviewRow(BaseModel):
+    portfolio: str
+    brokerage: str
+    ticker: str
+    shares: float
+    cost_per_share: float
+    purchase_date: str
+
+
+@app.post("/api/import/preview")
+async def import_preview(file: UploadFile = File(...)):
+    """
+    Parse an uploaded CSV or Excel file and return a preview of what
+    would be imported, without modifying holdings.
+    """
+    content = await file.read()
+    rows, errors = _parse_upload_rows(content, file.filename or "upload.csv")
+    return {"rows": rows, "errors": errors, "total": len(rows)}
+
+
+@app.post("/api/import/confirm")
+async def import_confirm(
+    file: UploadFile = File(...),
+    mode: str = "merge",   # "merge" | "replace"
+):
+    """
+    Parse and apply an uploaded CSV or Excel file to holdings.
+    mode=merge  — add rows (skips duplicate ticker in same portfolio)
+    mode=replace — clear each portfolio that appears in the file, then add all rows
+    """
+    content = await file.read()
+    rows, errors = _parse_upload_rows(content, file.filename or "upload.csv")
+
+    if not rows:
+        raise HTTPException(status_code=400, detail="No valid rows found. " + "; ".join(errors))
+
+    if mode == "replace":
+        # Clear only portfolios that appear in the upload
+        affected = {r["portfolio"] for r in rows}
+        for portfolio in affected:
+            for existing in h_store.get_portfolio(portfolio):
+                h_store.delete_holding(portfolio, existing["ticker"])
+
+    added, skipped = [], []
+    for row in rows:
+        portfolio = row["portfolio"]
+        existing = {h["ticker"] for h in h_store.get_portfolio(portfolio)}
+        if row["ticker"] in existing and mode == "merge":
+            skipped.append(row["ticker"])
+            continue
+        h_store.add_holding(portfolio, {
+            "ticker":         row["ticker"],
+            "shares":         row["shares"],
+            "cost_per_share": row["cost_per_share"],
+            "purchase_date":  row["purchase_date"],
+            "brokerage":      row["brokerage"],
+        })
+        added.append(row["ticker"])
+
+    return {
+        "added":   added,
+        "skipped": skipped,
+        "errors":  errors,
+        "message": f"Import complete: {len(added)} added, {len(skipped)} skipped (already exist).",
     }
