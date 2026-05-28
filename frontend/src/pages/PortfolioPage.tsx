@@ -14,6 +14,7 @@ import { GainBarChart } from "@/components/GainBarChart";
 import { RecBadge } from "@/components/RecBadge";
 import { MetricsPanel } from "@/components/MetricsPanel";
 import { RecommendationsPanel } from "@/components/RecommendationsPanel";
+import { AnalystReport } from "@/components/AnalystReport";
 import { AddPositionModal } from "@/components/AddPositionModal";
 import { SkeletonCard, SkeletonTable } from "@/components/Skeleton";
 import { formatCurrency, formatPct, gainColor } from "@/lib/utils";
@@ -127,6 +128,11 @@ export function PortfolioPage({ portfolio }: Props) {
           </button>
         </div>
       </div>
+
+      {/* Analyst Report — always visible once data loaded */}
+      {!isLoading && activeHoldings.length > 0 && (
+        <AnalystReport holdings={activeHoldings} label={data?.label ?? "Portfolio"} />
+      )}
 
       {/* Exclusion banner */}
       {hasExclusions && (
