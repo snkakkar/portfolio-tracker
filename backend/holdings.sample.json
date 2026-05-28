@@ -1,0 +1,28 @@
+{
+  "stocks": [
+    {"ticker": "JPM",  "shares": 10, "cost_per_share": 150.00, "purchase_date": "2022-01-15"},
+    {"ticker": "HD",   "shares": 5,  "cost_per_share": 290.00, "purchase_date": "2022-03-10"},
+    {"ticker": "UNH",  "shares": 4,  "cost_per_share": 480.00, "purchase_date": "2021-11-05"},
+    {"ticker": "LLY",  "shares": 3,  "cost_per_share": 600.00, "purchase_date": "2023-02-20"}
+  ],
+  "etfs": [
+    {"ticker": "SPY",  "shares": 15, "cost_per_share": 400.00, "purchase_date": "2021-06-01"},
+    {"ticker": "IWM",  "shares": 10, "cost_per_share": 220.00, "purchase_date": "2021-08-15"},
+    {"ticker": "XLK",  "shares": 12, "cost_per_share": 150.00, "purchase_date": "2022-04-10"}
+  ],
+  "retirement_stocks": [
+    {"ticker": "BRK-B","shares": 20, "cost_per_share": 280.00, "purchase_date": "2020-05-20"},
+    {"ticker": "MA",   "shares": 8,  "cost_per_share": 340.00, "purchase_date": "2020-09-01"},
+    {"ticker": "CAT",  "shares": 6,  "cost_per_share": 200.00, "purchase_date": "2021-07-14"}
+  ],
+  "retirement_etfs": [
+    {"ticker": "XLF",  "shares": 30, "cost_per_share": 35.00,  "purchase_date": "2020-01-10"},
+    {"ticker": "XLE",  "shares": 25, "cost_per_share": 58.00,  "purchase_date": "2021-02-01"},
+    {"ticker": "XLV",  "shares": 20, "cost_per_share": 120.00, "purchase_date": "2020-11-03"}
+  ],
+  "watchlist": [
+    {"ticker": "PLTR", "shares": 0, "cost_per_share": 25.00, "purchase_date": "2024-01-01"},
+    {"ticker": "AMD",  "shares": 0, "cost_per_share": 150.00,"purchase_date": "2024-01-01"},
+    {"ticker": "DDOG", "shares": 0, "cost_per_share": 120.00,"purchase_date": "2024-03-15"}
+  ]
+}

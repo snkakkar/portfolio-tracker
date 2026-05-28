@@ -1,0 +1,62 @@
+import axios from "axios";
+import type { AllPortfoliosData, PortfolioData, PriceBar, WatchItem, DiscoverStock } from "@/types";
+
+const BASE = "/api";
+
+export const api = {
+  getPortfolio: (portfolio: string): Promise<PortfolioData> =>
+    axios.get(`${BASE}/portfolio/${portfolio}`).then((r) => r.data),
+
+  getAllPortfolios: (): Promise<AllPortfoliosData> =>
+    axios.get(`${BASE}/portfolio`).then((r) => r.data),
+
+  getHistory: (ticker: string, period = "1y"): Promise<{ ticker: string; period: string; history: PriceBar[] }> =>
+    axios.get(`${BASE}/history/${ticker}`, { params: { period } }).then((r) => r.data),
+
+  validateTicker: (ticker: string): Promise<{ valid: boolean; ticker: string; name?: string; price?: number }> =>
+    axios.get(`${BASE}/validate/${ticker}`).then((r) => r.data),
+
+  addHolding: (
+    portfolio: string,
+    ticker: string,
+    shares: number,
+    purchase_date: string,
+    cost_per_share?: number
+  ) =>
+    axios
+      .post(`${BASE}/holdings/${portfolio}`, { ticker, shares, purchase_date, cost_per_share })
+      .then((r) => r.data),
+
+  updateHolding: (
+    portfolio: string,
+    ticker: string,
+    updates: { shares?: number; purchase_date?: string; cost_per_share?: number }
+  ) => axios.put(`${BASE}/holdings/${portfolio}/${ticker}`, updates).then((r) => r.data),
+
+  deleteHolding: (portfolio: string, ticker: string) =>
+    axios.delete(`${BASE}/holdings/${portfolio}/${ticker}`).then((r) => r.data),
+
+  // Watchlist
+  getWatchlist: (): Promise<{ items: WatchItem[] }> =>
+    axios.get(`${BASE}/watchlist`).then((r) => r.data),
+
+  addToWatchlist: (ticker: string, tracked_price?: number, tracked_since?: string) =>
+    axios
+      .post(`${BASE}/watchlist`, {
+        ticker,
+        shares: 0,
+        purchase_date: tracked_since ?? new Date().toISOString().slice(0, 10),
+        cost_per_share: tracked_price,
+      })
+      .then((r) => r.data),
+
+  removeFromWatchlist: (ticker: string) =>
+    axios.delete(`${BASE}/watchlist/${ticker}`).then((r) => r.data),
+
+  // Stock discovery
+  discoverStocks: (): Promise<{
+    stocks: DiscoverStock[];
+    owned_count: number;
+    universe_size: number;
+  }> => axios.get(`${BASE}/discover`).then((r) => r.data),
+};
