@@ -10,11 +10,13 @@ A full-stack brokerage portfolio tracker with live market data, advanced analyti
 
 ### Portfolio Management
 - **4 Portfolio Accounts** — Brokerage Stocks, Brokerage ETFs, Retirement Stocks, Retirement ETFs
+- **Custom Portfolios** — Create additional portfolios with custom labels/colors as needed
 - **Watchlist** — Monitor stocks without adding them to a portfolio
 - **Add / Edit / Remove** positions with live ticker validation
 - **Exit Position** — Mark a position as sold with exit price and date; realized P&L is calculated and stored separately from your active holdings
 - **Closed Positions History** — Per-portfolio table of all exited trades with realized gain/loss, win rate, and average hold duration
 - **Temporary Exclusion** — Toggle any holding out of calculations on-the-fly to see how the rest of your portfolio performs without it
+- **CSV/Excel Import Flexibility** — Uploads accept portfolio keys or labels, and unknown portfolio names are auto-created as custom portfolios during import
 
 ### Live Market Data & Analytics
 - **Live Prices** — Real-time quotes, daily changes, and fundamentals via Yahoo Finance (cached 60 s)

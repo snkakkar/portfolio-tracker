@@ -1396,7 +1396,30 @@ _TEMPLATE_ROWS = [
 _CSV_HEADERS = ["portfolio", "brokerage", "ticker", "shares", "cost_per_share", "purchase_date"]
 
 
-def _parse_upload_rows(content: bytes, filename: str) -> list[dict]:
+def _slugify_portfolio_key(name: str) -> str:
+    key = "".join(ch.lower() if ch.isalnum() else "_" for ch in name.strip())
+    while "__" in key:
+        key = key.replace("__", "_")
+    return key.strip("_")
+
+
+def _build_portfolio_alias_map() -> dict[str, str]:
+    """Map portfolio aliases/labels/keys -> canonical key, including custom portfolios."""
+    aliases = dict(_PORTFOLIO_ALIASES)
+    try:
+        for meta in h_store.get_all_portfolio_meta():
+            key = meta["key"]
+            label = meta["label"]
+            aliases[key.lower()] = key
+            aliases[label.lower()] = key
+            aliases[_slugify_portfolio_key(label).lower()] = key
+    except Exception:
+        # If metadata isn't available, keep static aliases only.
+        pass
+    return aliases
+
+
+def _parse_upload_rows(content: bytes, filename: str) -> tuple[list[dict], list[str]]:
     """
     Parse uploaded CSV or Excel into a list of validated row dicts.
     Returns list of dicts with keys: portfolio, brokerage, ticker, shares,
@@ -1404,6 +1427,7 @@ def _parse_upload_rows(content: bytes, filename: str) -> list[dict]:
     """
     rows: list[dict] = []
     errors: list[str] = []
+    alias_map = _build_portfolio_alias_map()
 
     if filename.lower().endswith((".xlsx", ".xls")):
         wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
@@ -1447,7 +1471,8 @@ def _parse_upload_rows(content: bytes, filename: str) -> list[dict]:
             continue  # skip blank rows
 
         ticker_raw  = str(col(row, "ticker")).strip().upper()
-        portfolio_raw = str(col(row, "portfolio")).strip().lower()
+        portfolio_input = str(col(row, "portfolio")).strip()
+        portfolio_raw = portfolio_input.lower()
         brokerage   = str(col(row, "brokerage")).strip()
         shares_raw  = col(row, "shares")
         cost_raw    = col(row, "cost_per_share")
@@ -1456,12 +1481,27 @@ def _parse_upload_rows(content: bytes, filename: str) -> list[dict]:
         if not ticker_raw:
             continue  # blank ticker = skip silently
 
-        # Map portfolio alias → canonical key
-        portfolio_key = _PORTFOLIO_ALIASES.get(portfolio_raw)
-        if not portfolio_key:
-            errors.append(f"Row {line_no}: unknown portfolio '{portfolio_raw}' for {ticker_raw} — "
-                          f"use one of: Stocks, ETFs, Retirement Stocks, Retirement ETFs, Watchlist")
+        if not portfolio_input:
+            errors.append(f"Row {line_no}: missing portfolio name for {ticker_raw}")
             continue
+
+        # Map portfolio alias/label -> canonical key; if unknown, auto-create custom.
+        portfolio_key = alias_map.get(portfolio_raw)
+        portfolio_label = portfolio_input
+        create_if_missing = False
+        if portfolio_key:
+            # Keep friendly label from existing metadata when possible
+            try:
+                label_lookup = {m["key"]: m["label"] for m in h_store.get_all_portfolio_meta()}
+                portfolio_label = label_lookup.get(portfolio_key, portfolio_input)
+            except Exception:
+                pass
+        else:
+            portfolio_key = _slugify_portfolio_key(portfolio_input)
+            if not portfolio_key:
+                errors.append(f"Row {line_no}: invalid portfolio name '{portfolio_input}' for {ticker_raw}")
+                continue
+            create_if_missing = True
 
         # Shares
         try:
@@ -1482,7 +1522,7 @@ def _parse_upload_rows(content: bytes, filename: str) -> list[dict]:
             date_str = date_raw.strftime("%Y-%m-%d")
         else:
             raw = str(date_raw).strip()
-            for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y", "%d/%m/%Y"):
+            for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%m-%d-%Y", "%d/%m/%Y"):
                 try:
                     date_str = datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
                     break
@@ -1495,6 +1535,8 @@ def _parse_upload_rows(content: bytes, filename: str) -> list[dict]:
 
         rows.append({
             "portfolio":      portfolio_key,
+            "portfolio_label": portfolio_label,
+            "create_if_missing": create_if_missing,
             "brokerage":      brokerage,
             "ticker":         ticker_raw,
             "shares":         shares,
@@ -1699,6 +1741,22 @@ async def import_confirm(
     if not rows:
         raise HTTPException(status_code=400, detail="No valid rows found. " + "; ".join(errors))
 
+    # Auto-create any new custom portfolios referenced in the uploaded file.
+    created_portfolios: list[str] = []
+    known_keys = {m["key"] for m in h_store.get_all_portfolio_meta()}
+    for row in rows:
+        key = row["portfolio"]
+        if key in known_keys:
+            continue
+        label = row.get("portfolio_label") or key.replace("_", " ").title()
+        try:
+            h_store.create_portfolio(label=label, color="blue")
+            known_keys.add(key)
+            created_portfolios.append(label)
+        except ValueError:
+            # If portfolio already exists due to a race/repeat, continue.
+            known_keys.add(key)
+
     if mode == "replace":
         # Clear only portfolios that appear in the upload
         affected = {r["portfolio"] for r in rows}
@@ -1725,6 +1783,7 @@ async def import_confirm(
     return {
         "added":   added,
         "skipped": skipped,
+        "created_portfolios": created_portfolios,
         "errors":  errors,
         "message": f"Import complete: {len(added)} added, {len(skipped)} skipped (already exist).",
     }
