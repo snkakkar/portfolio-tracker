@@ -2,13 +2,17 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   TrendingUp, TrendingDown, Minus, XCircle, ChevronRight, ChevronDown,
+  PlusCircle, Lightbulb, Loader2,
 } from "lucide-react";
-import { cn, formatCurrency, formatPct, gainColor, REC_STYLES } from "@/lib/utils";
+import { useQuery } from "@tanstack/react-query";
+import { cn, formatCurrency, formatPct, gainColor, REC_STYLES, formatMarketCap } from "@/lib/utils";
 import { ScoreBreakdown } from "./ScoreBreakdown";
-import type { Holding, Recommendation } from "@/types";
+import { api } from "@/api/client";
+import type { Holding, Recommendation, PortfolioSuggestion } from "@/types";
 
 interface Props {
   holdings: Holding[];
+  portfolio: string;
   delay?: number;
 }
 
@@ -156,6 +160,130 @@ function HoldingCard({ h, idx }: { h: Holding; idx: number }) {
   );
 }
 
+// ─── Suggestion Card ─────────────────────────────────────────────────────────
+
+const GAP_LABELS: Record<string, string> = {
+  reduce_beta:        "Reduce Volatility",
+  add_value:          "Add Value",
+  add_diversification:"Diversify",
+  add_income:         "Add Income",
+};
+
+function SuggestionCard({ s, idx }: { s: PortfolioSuggestion; idx: number }) {
+  const [showBreakdown, setShowBreakdown] = useState(false);
+  const recStyle = REC_STYLES[s.recommendation].split(" ");
+  const gapLabel = GAP_LABELS[s.gap_type] ?? s.gap_type.replace(/_/g, " ");
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: idx * 0.05 }}
+      className="rounded-xl border border-sky-500/20 bg-sky-500/[0.04] overflow-hidden"
+    >
+      <div className="p-3.5 space-y-2.5">
+        {/* Header */}
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-sky-500/10 border border-sky-500/20 flex items-center justify-center">
+              <PlusCircle className="w-4 h-4 text-sky-400" />
+            </div>
+            <div>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="font-mono font-extrabold text-sm text-white">{s.ticker}</span>
+                <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-full border", REC_STYLES[s.recommendation])}>
+                  {s.recommendation}
+                </span>
+                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-sky-500/15 border border-sky-500/25 text-sky-400 uppercase tracking-wide">
+                  {gapLabel}
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-500 leading-tight truncate max-w-[160px]">{s.name}</p>
+            </div>
+          </div>
+          <div className="text-right shrink-0">
+            <p className="text-sm font-bold text-white font-mono">{formatCurrency(s.price)}</p>
+            <p className={cn("text-[11px] font-mono", gainColor(s.change_pct))}>{formatPct(s.change_pct)} today</p>
+          </div>
+        </div>
+
+        {/* 52W range */}
+        {s.week_52_low && s.week_52_high && s.week_52_high > s.week_52_low && (
+          <div className="flex items-center gap-1.5">
+            <span className="text-[9px] text-slate-600 font-mono">{formatCurrency(s.week_52_low)}</span>
+            <div className="relative flex-1 h-1 bg-slate-800 rounded-full">
+              <div className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-loss via-amber-500 to-gain" style={{ width: "100%" }} />
+              <div
+                className="absolute top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-white border-2 border-navy-900 shadow"
+                style={{ left: `calc(${Math.min(100, Math.max(0, (s.price - s.week_52_low) / (s.week_52_high - s.week_52_low) * 100))}% - 4px)` }}
+              />
+            </div>
+            <span className="text-[9px] text-slate-600 font-mono">{formatCurrency(s.week_52_high)}</span>
+          </div>
+        )}
+
+        {/* Quick stats */}
+        <div className="grid grid-cols-4 gap-1.5">
+          {[
+            { label: "1Y Return", value: formatPct(s.gain_1y_pct),   color: gainColor(s.gain_1y_pct) },
+            { label: "Alpha",     value: formatPct(s.alpha * 100),    color: gainColor(s.alpha) },
+            { label: "P/E",       value: s.pe_ratio ? s.pe_ratio.toFixed(1) + "x" : "—", color: "text-slate-300" },
+            { label: "Beta",      value: s.beta ? s.beta.toFixed(2) : "—", color: s.beta && s.beta > 1.5 ? "text-orange-400" : "text-slate-300" },
+          ].map(({ label, value, color }) => (
+            <div key={label} className="bg-black/20 rounded-lg p-1.5 text-center">
+              <p className={cn("text-xs font-bold font-mono", color)}>{value}</p>
+              <p className="text-[9px] text-slate-600 uppercase tracking-wider">{label}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Why it helps */}
+        <div className="rounded-lg bg-sky-500/[0.07] border border-sky-500/15 px-3 py-2">
+          <div className="flex items-start gap-1.5">
+            <Lightbulb className="w-3 h-3 text-sky-400 shrink-0 mt-0.5" />
+            <p className="text-[11px] text-sky-300/80 leading-snug">{s.why_it_helps}</p>
+          </div>
+        </div>
+
+        {/* Breakdown toggle */}
+        <button
+          onClick={() => setShowBreakdown(!showBreakdown)}
+          className={cn(
+            "w-full flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg border text-[10px] font-semibold transition-colors",
+            showBreakdown ? "bg-accent-blue/20 border-accent-blue/30 text-accent-blue" : "border-white/[0.08] text-slate-500 hover:text-slate-300"
+          )}
+        >
+          Score breakdown
+          <ChevronDown className={cn("w-3 h-3 transition-transform", showBreakdown && "rotate-180")} />
+        </button>
+      </div>
+
+      <AnimatePresence>
+        {showBreakdown && s.rec_breakdown && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.25 }}
+            className="overflow-hidden border-t border-white/[0.06]"
+          >
+            <div className="p-3.5 bg-black/20">
+              <ScoreBreakdown
+                breakdown={s.rec_breakdown}
+                score={s.rec_score}
+                recommendation={s.recommendation}
+                nextTier={s.rec_next_tier}
+                nextPts={s.rec_next_pts}
+                delay={0}
+              />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+}
+
 const FACTOR_GUIDE = [
   { name: "Alpha vs S&P 500",       max: 35, desc: "How much the stock has beaten (or trailed) VOO since your purchase date. The single most important factor — consistent outperformance is a strong buy signal." },
   { name: "52-Week Range Position", max: 20, desc: "Where the current price sits in its 52-week range. Near the low = potential value entry. Near the high = possible overextension." },
@@ -234,7 +362,7 @@ function ScoringGuide() {
   );
 }
 
-export function RecommendationsPanel({ holdings, delay = 0 }: Props) {
+export function RecommendationsPanel({ holdings, portfolio, delay = 0 }: Props) {
   // Group by recommendation
   const grouped = (["STRONG BUY", "BUY", "HOLD", "SELL", "STRONG SELL"] as Recommendation[]).reduce<
     Record<Recommendation, Holding[]>
@@ -251,6 +379,14 @@ export function RecommendationsPanel({ holdings, delay = 0 }: Props) {
   const avgScore = holdings.length
     ? (holdings.reduce((s, h) => s + h.rec_score, 0) / holdings.length).toFixed(1)
     : "—";
+
+  // Portfolio-specific suggestions
+  const { data: suggestData, isLoading: suggestLoading } = useQuery({
+    queryKey: ["suggestions", portfolio],
+    queryFn: () => api.getPortfolioSuggestions(portfolio),
+    staleTime: 300_000, // 5 min — suggestions don't change rapidly
+  });
+  const suggestions = suggestData?.suggestions ?? [];
 
   return (
     <motion.div
@@ -326,6 +462,49 @@ export function RecommendationsPanel({ holdings, delay = 0 }: Props) {
               : sells.map((h, i) => <HoldingCard key={h.ticker} h={h} idx={i} />)}
           </div>
         </div>
+      </div>
+
+      {/* ── Suggested Additions ─────────────────────────────────────────────── */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <div className="w-5 h-5 rounded bg-sky-500/10 flex items-center justify-center">
+              <PlusCircle className="w-3 h-3 text-sky-400" />
+            </div>
+            <p className="text-xs font-bold text-sky-400 uppercase tracking-wider">
+              Suggested Additions for This Portfolio
+            </p>
+          </div>
+          {suggestLoading && (
+            <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              Analysing gaps…
+            </div>
+          )}
+          {!suggestLoading && suggestions.length > 0 && (
+            <span className="text-[10px] text-slate-500">
+              {suggestions.length} stock{suggestions.length !== 1 ? "s" : ""} identified
+            </span>
+          )}
+        </div>
+
+        {suggestLoading ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {[1,2,3].map((i) => (
+              <div key={i} className="h-48 rounded-xl bg-white/[0.03] border border-white/[0.05] animate-pulse" />
+            ))}
+          </div>
+        ) : suggestions.length === 0 ? (
+          <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-5 py-6 text-center">
+            <p className="text-xs text-slate-500">No structural gaps detected — portfolio appears well-balanced.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {suggestions.map((s, i) => (
+              <SuggestionCard key={s.ticker} s={s} idx={i} />
+            ))}
+          </div>
+        )}
       </div>
     </motion.div>
   );

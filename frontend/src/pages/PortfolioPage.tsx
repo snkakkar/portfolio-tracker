@@ -421,7 +421,7 @@ export function PortfolioPage({ portfolio }: Props) {
 
       {/* === RECOMMENDATIONS TAB === */}
       {activeTab === "recommendations" && !isLoading && (
-        <RecommendationsPanel holdings={activeHoldings} delay={0.05} />
+        <RecommendationsPanel holdings={activeHoldings} portfolio={portfolio} delay={0.05} />
       )}
 
       {/* Loading state for tabs */}

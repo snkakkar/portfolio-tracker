@@ -125,6 +125,31 @@ export interface WatchItem {
   rec_next_pts: number | null;
 }
 
+export interface PortfolioSuggestion {
+  ticker: string;
+  name: string;
+  price: number;
+  change: number;
+  change_pct: number;
+  gain_1y_pct: number;
+  alpha: number;
+  week_52_high: number | null;
+  week_52_low: number | null;
+  pe_ratio: number | null;
+  beta: number | null;
+  market_cap: number | null;
+  sector: string | null;
+  recommendation: Recommendation;
+  rec_score: number;
+  rec_color: RecColor;
+  rec_reasons: string[];
+  rec_breakdown: RecBreakdown;
+  rec_next_tier: Recommendation | null;
+  rec_next_pts: number | null;
+  gap_type: string;
+  why_it_helps: string;
+}
+
 export const PORTFOLIOS = [
   { key: "stocks", label: "Brokerage Stocks", icon: "TrendingUp" },
   { key: "etfs", label: "Brokerage ETFs", icon: "BarChart2" },

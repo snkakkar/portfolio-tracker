@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { AllPortfoliosData, PortfolioData, PriceBar, WatchItem, DiscoverStock } from "@/types";
+import type { AllPortfoliosData, PortfolioData, PriceBar, WatchItem, DiscoverStock, PortfolioSuggestion } from "@/types";
 
 const BASE = "/api";
 
@@ -52,6 +52,12 @@ export const api = {
 
   removeFromWatchlist: (ticker: string) =>
     axios.delete(`${BASE}/watchlist/${ticker}`).then((r) => r.data),
+
+  // Portfolio-specific suggestions
+  getPortfolioSuggestions: (portfolio: string): Promise<{
+    suggestions: PortfolioSuggestion[];
+    gaps: string[];
+  }> => axios.get(`${BASE}/portfolio/${portfolio}/suggestions`).then((r) => r.data),
 
   // Stock discovery
   discoverStocks: (): Promise<{
