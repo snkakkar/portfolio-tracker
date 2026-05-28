@@ -10,7 +10,7 @@ import {
   Calendar, ShieldCheck, ArrowRight, RefreshCw,
 } from "lucide-react";
 import { api } from "@/api/client";
-import type { PlannerInput, PlannerResult, AggressionLevel } from "@/types";
+import type { PlannerInput, PlannerResult, AggressionLevel, ExternalBreakdown } from "@/types";
 import { cn } from "@/lib/utils";
 
 // ─── constants ────────────────────────────────────────────────────────────────
@@ -37,6 +37,11 @@ const DEFAULT_INPUT: PlannerInput = {
   early_phase_years: 15,
   retirement_target_value: 20_000_000,
   inflation_rate: 0.03,
+  external_401k: 0,
+  external_ira: 0,
+  external_cash: 0,
+  external_real_estate: 0,
+  external_other: 0,
 };
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -212,6 +217,47 @@ function InputSection({
         </div>
       </label>
 
+      {/* External assets */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-slate-400 uppercase tracking-widest font-medium">Additional Assets</span>
+          <span className="text-[10px] text-slate-600 bg-white/[0.04] px-2 py-0.5 rounded-full">not tracked in this app</span>
+        </div>
+        {([
+          { key: "external_401k",        label: "401(k) / 403(b)",            placeholder: "0" },
+          { key: "external_ira",          label: "IRA (Traditional / Roth)",   placeholder: "0" },
+          { key: "external_cash",         label: "Cash & Savings",             placeholder: "0" },
+          { key: "external_real_estate",  label: "Real Estate Equity",         placeholder: "0" },
+          { key: "external_other",        label: "Other (crypto, brokerage…)", placeholder: "0" },
+        ] as { key: keyof PlannerInput; label: string; placeholder: string }[]).map(({ key, label, placeholder }) => (
+          <label key={key} className="flex items-center gap-3">
+            <span className="text-[11px] text-slate-400 w-40 shrink-0">{label}</span>
+            <div className="relative flex-1">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">$</span>
+              <input
+                type="number"
+                value={(input[key] as number) || ""}
+                placeholder={placeholder}
+                onChange={e => onChange(key, Number(e.target.value) || 0)}
+                className="w-full bg-white/[0.04] border border-white/[0.08] rounded-xl pl-6 pr-3 py-2 text-white text-sm focus:outline-none focus:border-accent-blue/50"
+                step={1000} min={0}
+              />
+            </div>
+          </label>
+        ))}
+        {/* Running total */}
+        {(() => {
+          const ext = (input.external_401k || 0) + (input.external_ira || 0) +
+            (input.external_cash || 0) + (input.external_real_estate || 0) + (input.external_other || 0);
+          return ext > 0 ? (
+            <div className="flex justify-between items-center px-3 py-2 rounded-xl bg-accent-blue/[0.06] border border-accent-blue/20 text-[11px]">
+              <span className="text-slate-400">Additional assets total</span>
+              <span className="text-accent-blue font-bold">{fmt$(ext)}</span>
+            </div>
+          ) : null;
+        })()}
+      </div>
+
       <button
         onClick={onSubmit}
         disabled={loading}
@@ -272,6 +318,59 @@ function GaugeMeter({ prob }: { prob: number }) {
 }
 
 
+const BREAKDOWN_ITEMS: { key: keyof ExternalBreakdown; label: string; color: string }[] = [
+  { key: "tracked_portfolio", label: "Tracked Portfolio",    color: "#3b82f6" },
+  { key: "401k",              label: "401(k) / 403(b)",     color: "#10b981" },
+  { key: "ira",               label: "IRA",                  color: "#8b5cf6" },
+  { key: "cash",              label: "Cash & Savings",       color: "#f59e0b" },
+  { key: "real_estate",       label: "Real Estate",          color: "#f97316" },
+  { key: "other",             label: "Other",                color: "#06b6d4" },
+];
+
+function NetWorthBreakdown({ breakdown }: { breakdown: ExternalBreakdown }) {
+  const total = breakdown.grand_total;
+  const items = BREAKDOWN_ITEMS.filter(({ key }) => (breakdown[key] as number) > 0);
+
+  return (
+    <div className="rounded-2xl border border-white/[0.07] bg-[#0a1628] p-5">
+      <p className="text-[10px] text-slate-500 uppercase tracking-widest font-medium mb-4">
+        Total Net Worth Breakdown
+      </p>
+      <div className="flex h-3 rounded-full overflow-hidden mb-4 gap-0.5">
+        {items.map(({ key, color }) => {
+          const val = breakdown[key] as number;
+          return (
+            <div
+              key={key}
+              style={{ width: `${(val / total) * 100}%`, backgroundColor: color }}
+              className="h-full first:rounded-l-full last:rounded-r-full"
+            />
+          );
+        })}
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        {items.map(({ key, label, color }) => {
+          const val = breakdown[key] as number;
+          return (
+            <div key={key} className="flex items-center gap-2.5">
+              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
+              <div className="min-w-0">
+                <div className="text-xs font-bold text-white">{fmt$(val)}</div>
+                <div className="text-[10px] text-slate-500 truncate">{label}</div>
+                <div className="text-[10px] text-slate-600">{((val / total) * 100).toFixed(1)}%</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-4 pt-3 border-t border-white/[0.06] flex justify-between items-center">
+        <span className="text-[11px] text-slate-400">Combined starting value for projection</span>
+        <span className="text-sm font-black text-accent-blue">{fmt$(total)}</span>
+      </div>
+    </div>
+  );
+}
+
 function ResultDashboard({ result, input }: { result: PlannerResult; input: PlannerInput }) {
   const [expandedRec, setExpandedRec] = useState<number | null>(null);
 
@@ -310,9 +409,11 @@ function ResultDashboard({ result, input }: { result: PlannerResult; input: Plan
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
           {
-            label: "Current Portfolio",
+            label: "Total Net Worth",
             value: fmt$(result.current_portfolio_value),
-            sub: "Total across all portfolios",
+            sub: result.external_breakdown.total_external > 0
+              ? `${fmt$(result.tracked_portfolio_value)} tracked + ${fmt$(result.external_breakdown.total_external)} external`
+              : "Tracked portfolios only",
             icon: DollarSign,
             color: "text-accent-blue",
           },
@@ -350,6 +451,11 @@ function ResultDashboard({ result, input }: { result: PlannerResult; input: Plan
           </div>
         ))}
       </div>
+
+      {/* Net worth breakdown — only shown when external assets were entered */}
+      {result.external_breakdown.total_external > 0 && (
+        <NetWorthBreakdown breakdown={result.external_breakdown} />
+      )}
 
       {/* Probability gauge + savings check */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">

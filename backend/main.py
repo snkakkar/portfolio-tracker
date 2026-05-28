@@ -792,6 +792,12 @@ class PlannerInput(BaseModel):
     early_phase_years: int = 15                 # how many years the "early" phase lasts
     retirement_target_value: Optional[float] = None  # desired total portfolio value at retirement
     inflation_rate: float = 0.03                # assumed annual inflation (default 3%)
+    # External assets not tracked in this app
+    external_401k: float = 0.0                  # 401k / employer retirement plan balance
+    external_ira: float = 0.0                   # Traditional or Roth IRA
+    external_cash: float = 0.0                  # Cash, HYSA, savings accounts
+    external_real_estate: float = 0.0           # Home equity / investment property equity
+    external_other: float = 0.0                 # Other investments, brokerage, crypto, etc.
 
 
 # Return assumptions (nominal annual expected return, annual std dev) per aggression level
@@ -879,6 +885,30 @@ def run_retirement_planner(body: PlannerInput):
             sectors_held[h["sector"]] = sectors_held.get(h["sector"], 0) + h["current_value"]
         if h.get("beta"):
             betas.append(h["beta"])
+
+    tracked_portfolio_value = total_value
+
+    # ── External assets — add to starting projection value ────────────────────
+    # Cash is invested conservatively (HYSA/money market ~4.5% nominal); all
+    # others grow with the same equity-blend return as the main portfolio.
+    external_401k          = max(0.0, body.external_401k)
+    external_ira           = max(0.0, body.external_ira)
+    external_cash          = max(0.0, body.external_cash)
+    external_real_estate   = max(0.0, body.external_real_estate)
+    external_other         = max(0.0, body.external_other)
+    total_external         = external_401k + external_ira + external_cash + external_real_estate + external_other
+    total_value           += total_external   # combined starting point for projections
+
+    external_breakdown = {
+        "tracked_portfolio": round(tracked_portfolio_value, 2),
+        "401k":              round(external_401k, 2),
+        "ira":               round(external_ira, 2),
+        "cash":              round(external_cash, 2),
+        "real_estate":       round(external_real_estate, 2),
+        "other":             round(external_other, 2),
+        "total_external":    round(total_external, 2),
+        "grand_total":       round(total_value, 2),
+    }
 
     # ── Return assumptions for each phase ─────────────────────────────────────
     aggr_early = body.aggression_early if body.aggression_early in _RETURN_ASSUMPTIONS else "aggressive"
@@ -1102,6 +1132,8 @@ def run_retirement_planner(body: PlannerInput):
 
     return {
         "current_portfolio_value": round(total_value, 2),
+        "tracked_portfolio_value": round(tracked_portfolio_value, 2),
+        "external_breakdown": external_breakdown,
         "years_to_retirement": years_to_retirement,
         "retirement_target": round(retirement_target, 0),
         "monthly_income_target_today": monthly_income_today,

@@ -163,6 +163,12 @@ export interface PlannerInput {
   early_phase_years: number;
   retirement_target_value: number | null;
   inflation_rate: number;
+  // External assets not tracked in this app
+  external_401k: number;
+  external_ira: number;
+  external_cash: number;
+  external_real_estate: number;
+  external_other: number;
 }
 
 export interface PlannerPhase {
@@ -186,8 +192,21 @@ export interface YearlyProjection {
   value: number;
 }
 
+export interface ExternalBreakdown {
+  tracked_portfolio: number;
+  "401k": number;
+  ira: number;
+  cash: number;
+  real_estate: number;
+  other: number;
+  total_external: number;
+  grand_total: number;
+}
+
 export interface PlannerResult {
   current_portfolio_value: number;
+  tracked_portfolio_value: number;
+  external_breakdown: ExternalBreakdown;
   years_to_retirement: number;
   retirement_target: number;
   monthly_income_target_today: number;
