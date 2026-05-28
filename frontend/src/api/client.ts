@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { AllPortfoliosData, PortfolioData, PriceBar, WatchItem, DiscoverStock, PortfolioSuggestion } from "@/types";
+import type { AllPortfoliosData, PortfolioData, PriceBar, WatchItem, DiscoverStock, PortfolioSuggestion, PlannerInput, PlannerResult } from "@/types";
 
 const BASE = "/api";
 
@@ -58,6 +58,10 @@ export const api = {
     suggestions: PortfolioSuggestion[];
     gaps: string[];
   }> => axios.get(`${BASE}/portfolio/${portfolio}/suggestions`).then((r) => r.data),
+
+  // Retirement planner
+  runPlanner: (input: PlannerInput): Promise<PlannerResult> =>
+    axios.post(`${BASE}/planner`, input).then((r) => r.data),
 
   // Stock discovery
   discoverStocks: (): Promise<{

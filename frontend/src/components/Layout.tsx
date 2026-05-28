@@ -1,7 +1,7 @@
 import { NavLink } from "react-router-dom";
 import {
   LayoutDashboard, TrendingUp, BarChart2, Shield, PieChart, Eye,
-  Zap, Circle,
+  Zap, Circle, Calculator,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -15,6 +15,10 @@ const PORTFOLIO_NAV = [
 
 const WATCH_NAV = [
   { to: "/watchlist", label: "Watchlist", icon: Eye },
+];
+
+const TOOLS_NAV = [
+  { to: "/planner", label: "Retirement Planner", icon: Calculator },
 ];
 
 function NavItem({
@@ -98,6 +102,22 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 icon={icon}
                 activeClass="bg-accent-teal/15 text-accent-teal border-accent-teal/25"
                 dotColor="bg-accent-teal"
+              />
+            ))}
+          </div>
+
+          <div className="pt-5">
+            <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-slate-600 px-3 pb-2">
+              Planning
+            </p>
+            {TOOLS_NAV.map(({ to, label, icon }) => (
+              <NavItem
+                key={to}
+                to={to}
+                label={label}
+                icon={icon}
+                activeClass="bg-violet-500/15 text-violet-400 border-violet-500/25"
+                dotColor="bg-violet-400"
               />
             ))}
           </div>

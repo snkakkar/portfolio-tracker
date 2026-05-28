@@ -5,6 +5,7 @@ import { Layout } from "@/components/Layout";
 import { Overview } from "@/pages/Overview";
 import { PortfolioPage } from "@/pages/PortfolioPage";
 import { WatchlistPage } from "@/pages/WatchlistPage";
+import { RetirementPlanner } from "@/pages/RetirementPlanner";
 
 const pageVariants = {
   initial: { opacity: 0, y: 8 },
@@ -31,6 +32,7 @@ function AnimatedRoutes() {
           <Route path="/retirement-stocks" element={<PortfolioPage portfolio="retirement_stocks" />} />
           <Route path="/retirement-etfs" element={<PortfolioPage portfolio="retirement_etfs" />} />
           <Route path="/watchlist" element={<WatchlistPage />} />
+          <Route path="/planner" element={<RetirementPlanner />} />
         </Routes>
       </motion.div>
     </AnimatePresence>

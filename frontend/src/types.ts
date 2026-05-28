@@ -150,6 +150,68 @@ export interface PortfolioSuggestion {
   why_it_helps: string;
 }
 
+// ─── Retirement Planner ───────────────────────────────────────────────────────
+
+export type AggressionLevel = "aggressive" | "moderate_aggressive" | "moderate" | "conservative";
+
+export interface PlannerInput {
+  current_age: number;
+  retirement_age: number;
+  annual_savings: number;
+  aggression_early: AggressionLevel;
+  aggression_late: AggressionLevel;
+  early_phase_years: number;
+  target_monthly_income: number | null;
+  inflation_rate: number;
+}
+
+export interface PlannerPhase {
+  label: string;
+  years: number;
+  strategy: AggressionLevel;
+  expected_return: string;
+  projected_end_value: number;
+}
+
+export interface PlannerRecommendation {
+  type: "savings" | "allocation" | "concentration" | "diversification" | "planning";
+  priority: "high" | "medium" | "positive";
+  title: string;
+  detail: string;
+}
+
+export interface YearlyProjection {
+  age: number;
+  year: number;
+  value: number;
+}
+
+export interface PlannerResult {
+  current_portfolio_value: number;
+  years_to_retirement: number;
+  retirement_target: number;
+  monthly_income_target_today: number;
+  annual_income_target_today: number;
+  annual_income_target_future: number;
+  mc_p10: number;
+  mc_p25: number;
+  mc_p50: number;
+  mc_p75: number;
+  mc_p90: number;
+  prob_success: number;
+  annual_savings: number;
+  required_annual_savings: number;
+  annual_savings_surplus_deficit: number;
+  avg_beta: number | null;
+  sector_weights_pct: Record<string, number>;
+  top5_holdings: { ticker: string; name: string; value: number; pct: number }[];
+  top3_concentration_pct: number;
+  phases: PlannerPhase[];
+  yearly_projection: YearlyProjection[];
+  recommendations: PlannerRecommendation[];
+  assumptions: Record<string, string>;
+}
+
 export const PORTFOLIOS = [
   { key: "stocks", label: "Brokerage Stocks", icon: "TrendingUp" },
   { key: "etfs", label: "Brokerage ETFs", icon: "BarChart2" },

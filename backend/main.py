@@ -4,6 +4,8 @@ from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timedelta
 import concurrent.futures
+import math
+import random
 
 import holdings as h_store
 import market_data as md
@@ -777,3 +779,370 @@ def get_portfolio_suggestions(portfolio: str):
 @app.get("/")
 def root():
     return {"status": "Portfolio Tracker API running"}
+
+
+# ─── Retirement Planner ───────────────────────────────────────────────────────
+
+class PlannerInput(BaseModel):
+    current_age: int
+    retirement_age: int
+    annual_savings: float                       # $ added per year across all portfolios
+    aggression_early: str = "aggressive"        # "aggressive" | "moderate_aggressive" | "moderate"
+    aggression_late: str = "moderate_aggressive"
+    early_phase_years: int = 15                 # how many years the "early" phase lasts
+    target_monthly_income: Optional[float] = None  # desired monthly income in retirement (today $)
+    inflation_rate: float = 0.03                # assumed annual inflation (default 3%)
+
+
+# Return assumptions (nominal annual expected return, annual std dev) per aggression level
+_RETURN_ASSUMPTIONS = {
+    "aggressive":           (0.095, 0.18),   # ~9.5% nominal, 18% vol  (90% equity)
+    "moderate_aggressive":  (0.080, 0.14),   # ~8.0% nominal, 14% vol  (75% equity)
+    "moderate":             (0.065, 0.11),   # ~6.5% nominal, 11% vol  (60% equity)
+    "conservative":         (0.048, 0.08),   # ~4.8% nominal,  8% vol  (40% equity)
+}
+
+_IDEAL_EQUITY_PCT = {
+    "aggressive":           0.90,
+    "moderate_aggressive":  0.75,
+    "moderate":             0.60,
+    "conservative":         0.40,
+}
+
+
+def _box_muller() -> float:
+    """Standard normal via Box-Muller (avoids numpy dependency in planner)."""
+    u1 = max(random.random(), 1e-10)
+    u2 = random.random()
+    return math.sqrt(-2 * math.log(u1)) * math.cos(2 * math.pi * u2)
+
+
+def _run_monte_carlo(
+    start_value: float,
+    annual_savings: float,
+    years: int,
+    early_phase_years: int,
+    mu_early: float,
+    sigma_early: float,
+    mu_late: float,
+    sigma_late: float,
+    simulations: int = 600,
+) -> list[float]:
+    """
+    Return a sorted list of terminal portfolio values from Monte Carlo simulation.
+    Uses lognormal annual returns, contributions added at start of each year.
+    """
+    results: list[float] = []
+    for _ in range(simulations):
+        value = start_value
+        for yr in range(years):
+            value += annual_savings       # add fresh savings each year
+            mu   = mu_early   if yr < early_phase_years else mu_late
+            sigma = sigma_early if yr < early_phase_years else sigma_late
+            # Lognormal return: geometric mean = mu - 0.5*sigma²
+            log_return = (mu - 0.5 * sigma ** 2) + sigma * _box_muller()
+            value *= math.exp(log_return)
+        results.append(max(value, 0))
+    results.sort()
+    return results
+
+
+@app.post("/api/planner")
+def run_retirement_planner(body: PlannerInput):
+    """
+    Full retirement projection engine.
+    Returns Monte Carlo percentiles, savings gap/surplus, portfolio fitness,
+    and concrete recommendations tailored to timeline and aggression level.
+    """
+    years_to_retirement = body.retirement_age - body.current_age
+    if years_to_retirement <= 0:
+        raise HTTPException(status_code=400, detail="Retirement age must be greater than current age")
+
+    # ── Fetch current total portfolio value ───────────────────────────────────
+    md.get_quote("VOO")
+    total_value = 0.0
+    all_holdings_flat: list[dict] = []
+    sectors_held: dict[str, float] = {}
+    betas: list[float] = []
+    raw_all = []
+    for portfolio in PORTFOLIO_LABELS:
+        for raw in h_store.get_portfolio(portfolio):
+            raw_all.append(raw)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
+        enriched = list(ex.map(enrich_holding, raw_all))
+
+    for h in enriched:
+        total_value += h["current_value"]
+        all_holdings_flat.append(h)
+        if h.get("sector"):
+            sectors_held[h["sector"]] = sectors_held.get(h["sector"], 0) + h["current_value"]
+        if h.get("beta"):
+            betas.append(h["beta"])
+
+    # ── Return assumptions for each phase ─────────────────────────────────────
+    aggr_early = body.aggression_early if body.aggression_early in _RETURN_ASSUMPTIONS else "aggressive"
+    aggr_late  = body.aggression_late  if body.aggression_late  in _RETURN_ASSUMPTIONS else "moderate_aggressive"
+    mu_e, sig_e = _RETURN_ASSUMPTIONS[aggr_early]
+    mu_l, sig_l = _RETURN_ASSUMPTIONS[aggr_late]
+
+    early_phase_years = min(body.early_phase_years, years_to_retirement)
+
+    # ── Monte Carlo ───────────────────────────────────────────────────────────
+    mc_results = _run_monte_carlo(
+        start_value=total_value,
+        annual_savings=body.annual_savings,
+        years=years_to_retirement,
+        early_phase_years=early_phase_years,
+        mu_early=mu_e,
+        sigma_early=sig_e,
+        mu_late=mu_l,
+        sigma_late=sig_l,
+        simulations=700,
+    )
+
+    n = len(mc_results)
+    p10  = mc_results[int(n * 0.10)]
+    p25  = mc_results[int(n * 0.25)]
+    p50  = mc_results[int(n * 0.50)]
+    p75  = mc_results[int(n * 0.75)]
+    p90  = mc_results[int(n * 0.90)]
+
+    # ── Retirement target ─────────────────────────────────────────────────────
+    # 4% withdrawal rule: portfolio = 25x desired annual income
+    # Inflate today's desired income to retirement date using assumed inflation
+    monthly_income_today = body.target_monthly_income or 7500.0  # $7,500/mo default (~$90k/yr)
+    annual_income_today  = monthly_income_today * 12
+    # Grow target to future dollars
+    inflation = body.inflation_rate
+    annual_income_future = annual_income_today * ((1 + inflation) ** years_to_retirement)
+    retirement_target    = annual_income_future * 25   # 4% SWR
+
+    # ── Simple deterministic projection (for year-by-year chart) ──────────────
+    # Uses blended average return per year for a smooth curve
+    yearly_values: list[dict] = []
+    det_value = total_value
+    for yr in range(years_to_retirement + 1):
+        yearly_values.append({
+            "age": body.current_age + yr,
+            "year": datetime.now().year + yr,
+            "value": round(det_value, 0),
+        })
+        if yr < years_to_retirement:
+            det_value += body.annual_savings
+            r = mu_e if yr < early_phase_years else mu_l
+            det_value *= (1 + r)
+
+    # ── Probability of success ────────────────────────────────────────────────
+    success_count = sum(1 for v in mc_results if v >= retirement_target)
+    prob_success  = round(success_count / len(mc_results) * 100, 1)
+
+    # ── Savings needed to guarantee (p50) hitting target ─────────────────────
+    # Binary-search for required annual savings to achieve p50 >= target
+    # Quick closed-form estimate with blended return
+    blended_r = (mu_e * early_phase_years + mu_l * max(0, years_to_retirement - early_phase_years)) / years_to_retirement
+    # FV of current lump sum
+    fv_lump = total_value * ((1 + blended_r) ** years_to_retirement)
+    # FV of annual contributions (annuity-due)
+    if blended_r > 0:
+        fv_annuity_per_dollar = ((1 + blended_r) ** years_to_retirement - 1) / blended_r * (1 + blended_r)
+    else:
+        fv_annuity_per_dollar = years_to_retirement
+    savings_gap_total = max(0, retirement_target - fv_lump)
+    required_annual_savings = savings_gap_total / fv_annuity_per_dollar if fv_annuity_per_dollar > 0 else 0
+    annual_savings_surplus_deficit = round(body.annual_savings - required_annual_savings, 0)
+
+    # ── Portfolio fitness for timeline ────────────────────────────────────────
+    # Ideal equity % for this phase of life
+    ideal_equity_early  = _IDEAL_EQUITY_PCT[aggr_early]
+    ideal_equity_late   = _IDEAL_EQUITY_PCT[aggr_late]
+
+    # Rough equity % proxy: ETFs that are broad equity vs bonds
+    # We flag if the portfolio has very low beta (too conservative for aggressive timeline)
+    avg_beta = sum(betas) / len(betas) if betas else None
+
+    # Sector concentration analysis
+    sector_weights_pct = {
+        s: round(v / total_value * 100, 1)
+        for s, v in sectors_held.items()
+    } if total_value > 0 else {}
+
+    # Top holdings concentration
+    sorted_by_value = sorted(all_holdings_flat, key=lambda h: h["current_value"], reverse=True)
+    top5 = [
+        {"ticker": h["ticker"], "name": h["name"], "value": h["current_value"],
+         "pct": round(h["current_value"] / total_value * 100, 1) if total_value else 0}
+        for h in sorted_by_value[:5]
+    ]
+    top3_pct = sum(h["pct"] for h in top5[:3])
+
+    # ── Generate recommendations ───────────────────────────────────────────────
+    recommendations: list[dict] = []
+
+    # Savings rate assessment
+    if annual_savings_surplus_deficit < -5000:
+        shortfall = abs(annual_savings_surplus_deficit)
+        recommendations.append({
+            "type": "savings",
+            "priority": "high",
+            "title": f"Increase annual savings by ${shortfall:,.0f}",
+            "detail": (
+                f"At your current savings rate of ${body.annual_savings:,.0f}/yr, "
+                f"the median projection falls ${abs(retirement_target - p50):,.0f} short of your "
+                f"${retirement_target/1e6:.1f}M retirement target. "
+                f"Boosting contributions to ~${required_annual_savings:,.0f}/yr would close this gap."
+            ),
+        })
+    elif annual_savings_surplus_deficit > 0:
+        recommendations.append({
+            "type": "savings",
+            "priority": "positive",
+            "title": "Savings rate on track",
+            "detail": (
+                f"Your ${body.annual_savings:,.0f}/yr savings rate exceeds the ${required_annual_savings:,.0f}/yr "
+                f"minimum needed. Median projection: ${p50/1e6:.1f}M vs ${retirement_target/1e6:.1f}M target — "
+                f"${(p50 - retirement_target)/1e6:.1f}M surplus."
+            ),
+        })
+
+    # Portfolio aggressiveness check
+    if avg_beta is not None and body.current_age < 42:
+        if avg_beta < 0.7:
+            recommendations.append({
+                "type": "allocation",
+                "priority": "high",
+                "title": "Portfolio is too conservative for your timeline",
+                "detail": (
+                    f"With {years_to_retirement} years until retirement, your portfolio beta of "
+                    f"{avg_beta:.2f} suggests a defensive tilt. For an aggressive first phase, "
+                    f"target 85-95% equities — consider reducing bond/low-vol allocations and adding "
+                    f"growth-oriented positions."
+                ),
+            })
+        elif avg_beta > 2.0:
+            recommendations.append({
+                "type": "allocation",
+                "priority": "medium",
+                "title": "Very high portfolio beta — consider balancing risk",
+                "detail": (
+                    f"Beta of {avg_beta:.2f} means your portfolio moves ~{avg_beta:.1f}x the market. "
+                    f"While aggressive is good early, some quality anchors (mega-cap, dividend names) "
+                    f"will reduce catastrophic drawdown risk."
+                ),
+            })
+
+    # Concentration risk
+    if top3_pct > 55:
+        recommendations.append({
+            "type": "concentration",
+            "priority": "medium",
+            "title": f"High concentration: top 3 positions = {top3_pct:.0f}% of portfolio",
+            "detail": (
+                f"A single bad quarter in {top5[0]['ticker']} or {top5[1]['ticker']} has outsized impact. "
+                f"Consider trimming positions over 20% of portfolio and redirecting into diversifying names or ETFs."
+            ),
+        })
+
+    # Sector gaps
+    important_missing = [
+        s for s in ["Healthcare", "Consumer Staples", "Financials", "Utilities"]
+        if s not in sectors_held
+    ]
+    if important_missing:
+        recommendations.append({
+            "type": "diversification",
+            "priority": "medium",
+            "title": f"Missing exposure: {', '.join(important_missing[:3])}",
+            "detail": (
+                f"Defensive sectors like Healthcare and Consumer Staples tend to outperform during recessions. "
+                f"With a 24-year horizon you'll live through multiple downturns — diversifying into these "
+                f"now reduces sequence-of-returns risk as you approach retirement."
+            ),
+        })
+
+    # Retirement drawdown strategy note
+    if years_to_retirement <= 10:
+        recommendations.append({
+            "type": "planning",
+            "priority": "high",
+            "title": "Begin transition to lower-volatility allocation",
+            "detail": (
+                f"With {years_to_retirement} years remaining, the sequence-of-returns risk is rising. "
+                f"Begin gradually shifting toward {int(ideal_equity_late*100)}% equities / "
+                f"{int((1-ideal_equity_late)*100)}% bonds/stable. "
+                f"A market crash 5 years before retirement can permanently impair your retirement income."
+            ),
+        })
+
+    # ── Phase-by-phase breakdown ──────────────────────────────────────────────
+    phases = []
+    phase1_end_yr = min(early_phase_years, years_to_retirement)
+    if phase1_end_yr > 0:
+        pv1 = total_value
+        for _ in range(phase1_end_yr):
+            pv1 = (pv1 + body.annual_savings) * (1 + mu_e)
+        phases.append({
+            "label": f"Phase 1: Aggressive Growth (Ages {body.current_age}–{body.current_age + phase1_end_yr})",
+            "years": phase1_end_yr,
+            "strategy": aggr_early,
+            "expected_return": f"{mu_e*100:.1f}%",
+            "projected_end_value": round(pv1, 0),
+        })
+
+    if years_to_retirement > early_phase_years:
+        remaining = years_to_retirement - early_phase_years
+        pv2 = pv1 if phases else total_value
+        for _ in range(remaining):
+            pv2 = (pv2 + body.annual_savings) * (1 + mu_l)
+        phases.append({
+            "label": f"Phase 2: Moderately Aggressive (Ages {body.current_age + phase1_end_yr}–{body.retirement_age})",
+            "years": remaining,
+            "strategy": aggr_late,
+            "expected_return": f"{mu_l*100:.1f}%",
+            "projected_end_value": round(pv2, 0),
+        })
+
+    return {
+        "current_portfolio_value": round(total_value, 2),
+        "years_to_retirement": years_to_retirement,
+        "retirement_target": round(retirement_target, 0),
+        "monthly_income_target_today": monthly_income_today,
+        "annual_income_target_today": annual_income_today,
+        "annual_income_target_future": round(annual_income_future, 0),
+
+        # Monte Carlo results
+        "mc_p10": round(p10, 0),
+        "mc_p25": round(p25, 0),
+        "mc_p50": round(p50, 0),
+        "mc_p75": round(p75, 0),
+        "mc_p90": round(p90, 0),
+        "prob_success": prob_success,
+
+        # Savings analysis
+        "annual_savings": body.annual_savings,
+        "required_annual_savings": round(required_annual_savings, 0),
+        "annual_savings_surplus_deficit": annual_savings_surplus_deficit,
+
+        # Portfolio profile
+        "avg_beta": round(avg_beta, 2) if avg_beta else None,
+        "sector_weights_pct": sector_weights_pct,
+        "top5_holdings": top5,
+        "top3_concentration_pct": round(top3_pct, 1),
+
+        # Phases and chart data
+        "phases": phases,
+        "yearly_projection": yearly_values,
+
+        # Recommendations
+        "recommendations": recommendations,
+
+        # Metadata
+        "assumptions": {
+            "early_phase": aggr_early,
+            "late_phase": aggr_late,
+            "early_expected_return": f"{mu_e*100:.1f}%",
+            "late_expected_return": f"{mu_l*100:.1f}%",
+            "inflation_rate": f"{inflation*100:.1f}%",
+            "withdrawal_rate": "4.0% (SWR)",
+        },
+    }
