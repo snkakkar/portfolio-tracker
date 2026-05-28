@@ -832,7 +832,10 @@ def root():
 class PlannerInput(BaseModel):
     current_age: int
     retirement_age: int
-    annual_savings: float                       # $ added per year across all portfolios
+    # Annual savings breakdown — backend sums these
+    annual_401k: float = 0.0                    # 401(k) contribution per year
+    annual_roth_ira: float = 0.0                # Roth IRA contribution per year
+    annual_other_savings: float = 0.0           # Other savings/brokerage per year
     aggression_early: str = "aggressive"        # "aggressive" | "moderate_aggressive" | "moderate"
     aggression_late: str = "moderate_aggressive"
     early_phase_years: int = 15                 # how many years the "early" phase lasts
@@ -964,6 +967,9 @@ def run_retirement_planner(body: PlannerInput):
 
     early_phase_years = min(body.early_phase_years, years_to_retirement)
 
+    # ── Compute total annual savings from breakdown ────────────────────────────
+    annual_savings = max(0.0, body.annual_401k) + max(0.0, body.annual_roth_ira) + max(0.0, body.annual_other_savings)
+
     # ── Retirement target ─────────────────────────────────────────────────────
     inflation = body.inflation_rate
     retirement_target = body.retirement_target_value or 20_000_000.0
@@ -972,7 +978,7 @@ def run_retirement_planner(body: PlannerInput):
     monthly_income_today = annual_income_today / 12
 
     mc_kwargs = dict(
-        annual_savings=body.annual_savings,
+        annual_savings=annual_savings,
         years=years_to_retirement,
         early_phase_years=early_phase_years,
         mu_early=mu_e, sigma_early=sig_e,
@@ -1019,8 +1025,8 @@ def run_retirement_planner(body: PlannerInput):
         if yr < years_to_retirement:
             r = mu_e if yr < early_phase_years else mu_l
             # Both series grow at the same rate; savings attributed to tracked portfolio
-            det_total   = (det_total   + body.annual_savings) * (1 + r)
-            det_tracked = (det_tracked + body.annual_savings) * (1 + r)
+            det_total   = (det_total   + annual_savings) * (1 + r)
+            det_tracked = (det_tracked + annual_savings) * (1 + r)
 
     # ── Savings needed to hit target (based on total net worth) ───────────────
     blended_r = (mu_e * early_phase_years + mu_l * max(0, years_to_retirement - early_phase_years)) / years_to_retirement
@@ -1031,7 +1037,7 @@ def run_retirement_planner(body: PlannerInput):
         fv_annuity_per_dollar = years_to_retirement
     savings_gap_total = max(0, retirement_target - fv_lump)
     required_annual_savings = savings_gap_total / fv_annuity_per_dollar if fv_annuity_per_dollar > 0 else 0
-    annual_savings_surplus_deficit = round(body.annual_savings - required_annual_savings, 0)
+    annual_savings_surplus_deficit = round(annual_savings - required_annual_savings, 0)
 
     # ── Portfolio fitness for timeline ────────────────────────────────────────
     # Ideal equity % for this phase of life
@@ -1068,7 +1074,7 @@ def run_retirement_planner(body: PlannerInput):
             "priority": "high",
             "title": f"Increase annual savings by ${shortfall:,.0f}",
             "detail": (
-                f"At your current savings rate of ${body.annual_savings:,.0f}/yr, "
+                f"At your current savings rate of ${annual_savings:,.0f}/yr, "
                 f"the median projection falls ${abs(retirement_target - p50):,.0f} short of your "
                 f"${retirement_target/1e6:.1f}M retirement target. "
                 f"Boosting contributions to ~${required_annual_savings:,.0f}/yr would close this gap."
@@ -1080,7 +1086,7 @@ def run_retirement_planner(body: PlannerInput):
             "priority": "positive",
             "title": "Savings rate on track",
             "detail": (
-                f"Your ${body.annual_savings:,.0f}/yr savings rate exceeds the ${required_annual_savings:,.0f}/yr "
+                f"Your ${annual_savings:,.0f}/yr savings rate exceeds the ${required_annual_savings:,.0f}/yr "
                 f"minimum needed. Median projection: ${p50/1e6:.1f}M vs ${retirement_target/1e6:.1f}M target — "
                 f"${(p50 - retirement_target)/1e6:.1f}M surplus."
             ),
@@ -1161,7 +1167,7 @@ def run_retirement_planner(body: PlannerInput):
     if phase1_end_yr > 0:
         pv1 = total_value
         for _ in range(phase1_end_yr):
-            pv1 = (pv1 + body.annual_savings) * (1 + mu_e)
+            pv1 = (pv1 + annual_savings) * (1 + mu_e)
         phases.append({
             "label": f"Phase 1: Aggressive Growth (Ages {body.current_age}–{body.current_age + phase1_end_yr})",
             "years": phase1_end_yr,
@@ -1174,7 +1180,7 @@ def run_retirement_planner(body: PlannerInput):
         remaining = years_to_retirement - early_phase_years
         pv2 = pv1 if phases else total_value
         for _ in range(remaining):
-            pv2 = (pv2 + body.annual_savings) * (1 + mu_l)
+            pv2 = (pv2 + annual_savings) * (1 + mu_l)
         phases.append({
             "label": f"Phase 2: Moderately Aggressive (Ages {body.current_age + phase1_end_yr}–{body.retirement_age})",
             "years": remaining,
@@ -1210,7 +1216,12 @@ def run_retirement_planner(body: PlannerInput):
         "tracked_prob_success": tracked_prob_success,
 
         # Savings analysis
-        "annual_savings": body.annual_savings,
+        "annual_savings": annual_savings,
+        "annual_savings_breakdown": {
+            "annual_401k":          body.annual_401k,
+            "annual_roth_ira":      body.annual_roth_ira,
+            "annual_other_savings": body.annual_other_savings,
+        },
         "required_annual_savings": round(required_annual_savings, 0),
         "annual_savings_surplus_deficit": annual_savings_surplus_deficit,
 

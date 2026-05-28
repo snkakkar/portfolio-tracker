@@ -31,7 +31,9 @@ const PRIORITY_CONFIG = {
 const DEFAULT_INPUT: PlannerInput = {
   current_age: 31,
   retirement_age: 55,
-  annual_savings: 40000,
+  annual_401k: 23000,
+  annual_roth_ira: 7000,
+  annual_other_savings: 10000,
   aggression_early: "aggressive",
   aggression_late: "moderate_aggressive",
   early_phase_years: 15,
@@ -120,20 +122,65 @@ function InputSection({
         </div>
       </div>
 
-      {/* Savings */}
-      <label className="block space-y-1.5">
-        <span className="text-[11px] text-slate-400 uppercase tracking-widest font-medium">Annual Savings Added to Portfolio</span>
-        <div className="relative">
-          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">$</span>
-          <input
-            type="number"
-            value={input.annual_savings}
-            onChange={e => onChange("annual_savings", Number(e.target.value))}
-            className="w-full bg-white/[0.04] border border-white/[0.08] rounded-xl pl-6 pr-3 py-2.5 text-white text-sm focus:outline-none focus:border-accent-blue/50"
-            step={1000} min={0}
-          />
+      {/* Retirement account savings */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-slate-400 uppercase tracking-widest font-medium">Retirement Account Contributions</span>
+          <span className="text-[10px] text-slate-600 bg-white/[0.04] px-2 py-0.5 rounded-full">tax-advantaged</span>
         </div>
-      </label>
+        {([
+          { key: "annual_401k",    label: "401(k) / 403(b) / SEP-IRA",  limit: "2025 limit: $23,000" },
+          { key: "annual_roth_ira", label: "Roth IRA / Traditional IRA", limit: "2025 limit: $7,000" },
+        ] as { key: keyof PlannerInput; label: string; limit: string }[]).map(({ key, label, limit }) => (
+          <label key={key} className="block space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] text-slate-400">{label}</span>
+              <span className="text-[10px] text-slate-600">{limit}</span>
+            </div>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">$</span>
+              <input
+                type="number"
+                value={(input[key] as number) || ""}
+                placeholder="0"
+                onChange={e => onChange(key, Number(e.target.value) || 0)}
+                className="w-full bg-white/[0.04] border border-white/[0.08] rounded-xl pl-6 pr-3 py-2.5 text-white text-sm focus:outline-none focus:border-accent-blue/50"
+                step={500} min={0}
+              />
+            </div>
+          </label>
+        ))}
+      </div>
+
+      {/* Other savings */}
+      <div className="space-y-3">
+        <span className="text-[11px] text-slate-400 uppercase tracking-widest font-medium block">Other Savings</span>
+        <label className="block space-y-1">
+          <span className="text-[11px] text-slate-400">Taxable brokerage / general savings / other</span>
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">$</span>
+            <input
+              type="number"
+              value={input.annual_other_savings || ""}
+              placeholder="0"
+              onChange={e => onChange("annual_other_savings", Number(e.target.value) || 0)}
+              className="w-full bg-white/[0.04] border border-white/[0.08] rounded-xl pl-6 pr-3 py-2.5 text-white text-sm focus:outline-none focus:border-accent-blue/50"
+              step={1000} min={0}
+            />
+          </div>
+        </label>
+      </div>
+
+      {/* Total annual savings pill */}
+      {(() => {
+        const total = (input.annual_401k || 0) + (input.annual_roth_ira || 0) + (input.annual_other_savings || 0);
+        return (
+          <div className="flex justify-between items-center px-3 py-2.5 rounded-xl bg-accent-blue/[0.08] border border-accent-blue/20 text-[11px]">
+            <span className="text-slate-400">Total annual savings</span>
+            <span className="text-accent-blue font-bold text-sm">{fmt$(total)}/yr</span>
+          </div>
+        );
+      })()}
 
       {/* Retirement target */}
       <label className="block space-y-1.5">
@@ -502,9 +549,23 @@ function ResultDashboard({ result, input }: { result: PlannerResult; input: Plan
         {/* Savings analysis */}
         <div className="rounded-2xl border border-white/[0.07] bg-[#0a1628] p-5 space-y-4">
           <p className="text-[10px] text-slate-500 uppercase tracking-widest font-medium">Savings Analysis</p>
+          {/* Savings breakdown */}
+          <div className="grid grid-cols-3 gap-2 text-center mb-3">
+            {[
+              { label: "401(k)/403(b)", value: result.annual_savings_breakdown.annual_401k, color: "text-accent-blue" },
+              { label: "Roth/Trad IRA", value: result.annual_savings_breakdown.annual_roth_ira, color: "text-accent-teal" },
+              { label: "Other savings", value: result.annual_savings_breakdown.annual_other_savings, color: "text-violet-400" },
+            ].map(({ label, value, color }) => (
+              <div key={label} className="bg-white/[0.03] rounded-xl p-2">
+                <div className={cn("text-xs font-bold font-mono", color)}>{fmt$(value)}/yr</div>
+                <div className="text-[9px] text-slate-600 mt-0.5">{label}</div>
+              </div>
+            ))}
+          </div>
+
           <div className="space-y-3">
             {[
-              { label: "Your annual savings", value: result.annual_savings, highlight: false },
+              { label: "Total annual savings", value: result.annual_savings, highlight: false },
               { label: "Required for median target", value: result.required_annual_savings, highlight: false },
               {
                 label: surplusPositive ? "Annual surplus" : "Annual shortfall",

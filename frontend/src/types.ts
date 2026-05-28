@@ -157,7 +157,10 @@ export type AggressionLevel = "aggressive" | "moderate_aggressive" | "moderate" 
 export interface PlannerInput {
   current_age: number;
   retirement_age: number;
-  annual_savings: number;
+  // Annual savings breakdown (backend sums these into annual_savings)
+  annual_401k: number;
+  annual_roth_ira: number;
+  annual_other_savings: number;
   aggression_early: AggressionLevel;
   aggression_late: AggressionLevel;
   early_phase_years: number;
@@ -226,6 +229,7 @@ export interface PlannerResult {
   tracked_mc_p90: number;
   tracked_prob_success: number;
   annual_savings: number;
+  annual_savings_breakdown: { annual_401k: number; annual_roth_ira: number; annual_other_savings: number };
   required_annual_savings: number;
   annual_savings_surplus_deficit: number;
   avg_beta: number | null;

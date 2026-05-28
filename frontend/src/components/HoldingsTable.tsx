@@ -108,6 +108,7 @@ export function HoldingsTable({ holdings, portfolio, onRefresh, excluded = new S
   }
 
   return (
+    <>
     <div className="overflow-x-auto rounded-2xl border border-white/[0.07]">
       <table className="w-full text-sm border-collapse">
         <thead>
@@ -458,5 +459,6 @@ export function HoldingsTable({ holdings, portfolio, onRefresh, excluded = new S
         }}
       />
     )}
+    </>
   );
 }
