@@ -47,6 +47,11 @@ class HoldingUpdate(BaseModel):
 
 # ─── Helper ───────────────────────────────────────────────────────────────────
 
+# Tickers that ARE the S&P 500 benchmark — comparing them to themselves is
+# meaningless, so we zero out alpha and treat sp_gain = their own gain.
+SP500_TRACKERS = {"VOO", "SPY", "IVV", "SPLG", "VFINX", "FXAIX", "SWPPX"}
+
+
 def enrich_holding(raw: dict) -> dict:
     ticker = raw["ticker"]
     shares = raw["shares"]
@@ -61,17 +66,23 @@ def enrich_holding(raw: dict) -> dict:
     gain = round(current_value - total_cost, 2)
     gain_pct = round((gain / total_cost * 100) if total_cost else 0.0, 4)
 
-    # S&P 500 (VOO) benchmark since purchase date
-    voo_at_purchase = md.get_voo_price_on_date(purchase_date)
-    voo_now = md.get_quote("VOO")["price"]
-    if voo_at_purchase and voo_at_purchase > 0 and voo_now > 0:
-        sp_gain_pct = round((voo_now - voo_at_purchase) / voo_at_purchase * 100, 4)
-        sp_gain_dollar = round((voo_now - voo_at_purchase) / voo_at_purchase * total_cost, 2)
-        alpha = round((gain_pct - sp_gain_pct) / 100, 4)  # stored as decimal ratio
-    else:
-        sp_gain_pct = 0.0
-        sp_gain_dollar = 0.0
+    # S&P 500 (VOO) benchmark since purchase date.
+    # For tickers that ARE S&P 500 trackers, alpha is always 0 by definition.
+    if ticker.upper() in SP500_TRACKERS:
+        sp_gain_pct = gain_pct
+        sp_gain_dollar = gain
         alpha = 0.0
+    else:
+        voo_at_purchase = md.get_voo_price_on_date(purchase_date)
+        voo_now = md.get_quote("VOO")["price"]
+        if voo_at_purchase and voo_at_purchase > 0 and voo_now > 0:
+            sp_gain_pct = round((voo_now - voo_at_purchase) / voo_at_purchase * 100, 4)
+            sp_gain_dollar = round((voo_now - voo_at_purchase) / voo_at_purchase * total_cost, 2)
+            alpha = round((gain_pct - sp_gain_pct) / 100, 4)  # stored as decimal ratio
+        else:
+            sp_gain_pct = 0.0
+            sp_gain_dollar = 0.0
+            alpha = 0.0
 
     rec = score_holding(
         ticker=ticker,
@@ -237,14 +248,18 @@ def get_watchlist():
         hyp_gain = round((price - cost) * shares, 2) if cost and price else None
         hyp_gain_pct = round((price - cost) / cost * 100, 4) if cost and price else None
 
-        voo_at_purchase = md.get_voo_price_on_date(purchase_date) if purchase_date else None
-        voo_now = md.get_quote("VOO")["price"]
-        if voo_at_purchase and voo_at_purchase > 0 and voo_now > 0:
-            sp_gain_pct = round((voo_now - voo_at_purchase) / voo_at_purchase * 100, 4)
-            alpha = round(((hyp_gain_pct or 0) - sp_gain_pct) / 100, 4)
-        else:
-            sp_gain_pct = 0.0
+        if ticker.upper() in SP500_TRACKERS:
+            sp_gain_pct = hyp_gain_pct or 0.0
             alpha = 0.0
+        else:
+            voo_at_purchase = md.get_voo_price_on_date(purchase_date) if purchase_date else None
+            voo_now = md.get_quote("VOO")["price"]
+            if voo_at_purchase and voo_at_purchase > 0 and voo_now > 0:
+                sp_gain_pct = round((voo_now - voo_at_purchase) / voo_at_purchase * 100, 4)
+                alpha = round(((hyp_gain_pct or 0) - sp_gain_pct) / 100, 4)
+            else:
+                sp_gain_pct = 0.0
+                alpha = 0.0
 
         rec = score_holding(
             ticker=ticker,
@@ -390,8 +405,8 @@ DISCOVERY_UNIVERSE = [
     "XOM", "CVX", "COP", "SLB", "EOG", "MPC",
     # Industrials / Other
     "RTX", "BA", "CAT", "DE", "HON", "LMT", "GE", "UPS", "FDX",
-    # ETFs worth considering
-    "SPY", "QQQ", "IWM", "ARKK", "XLK", "XLF", "XLE", "XLV",
+    # ETFs worth considering (excluding S&P trackers — alpha comparison meaningless)
+    "QQQ", "IWM", "ARKK", "XLK", "XLF", "XLE", "XLV",
 ]
 
 
@@ -428,7 +443,11 @@ def discover_stocks():
             # Use 1-year price change vs S&P as alpha proxy for discovery
             price_1y = md.get_historical_price(ticker.upper(), one_year_ago)
             stock_gain_pct = round((price - price_1y) / price_1y * 100, 4) if price_1y else 0.0
-            alpha = round((stock_gain_pct - sp_gain) / 100, 4)
+            # S&P trackers have no alpha by definition
+            if ticker.upper() in SP500_TRACKERS:
+                alpha = 0.0
+            else:
+                alpha = round((stock_gain_pct - sp_gain) / 100, 4)
 
             rec = score_holding(
                 ticker=ticker,
