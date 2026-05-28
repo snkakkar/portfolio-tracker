@@ -22,6 +22,9 @@ Score thresholds:
 
 from typing import Optional
 
+# Tickers that ARE the S&P 500 — alpha comparison and 52W range penalties
+# are not meaningful for index trackers.
+SP500_TRACKERS = {"VOO", "SPY", "IVV", "SPLG", "VFINX", "FXAIX", "SWPPX"}
 
 # Maximum points each factor can contribute (for normalisation in the UI)
 FACTOR_MAX = {
@@ -59,10 +62,16 @@ def score_holding(
     reasons: list[str] = []
     breakdown: dict[str, dict] = {}   # factor → {points, max, reason}
 
+    is_index_tracker = ticker.upper() in SP500_TRACKERS
+
     # ─── 1. Alpha signal (±35 pts) ────────────────────────────────────────────
     factor = "Alpha vs S&P 500"
     pts = 0.0
-    if alpha > 1.5:
+    if is_index_tracker:
+        # S&P trackers ARE the benchmark — comparison is N/A
+        pts = 0
+        reason = "Tracks the S&P 500 — benchmark comparison not applicable"
+    elif alpha > 1.5:
         pts = 35
         reason = f"Extraordinary alpha: outperformed S&P by {alpha*100:.0f}pp"
     elif alpha > 1.0:
@@ -74,9 +83,9 @@ def score_holding(
     elif alpha > 0.15:
         pts = 14
         reason = f"Outperforming S&P 500 (+{alpha*100:.0f}pp)"
-    elif alpha > 0.0:
-        pts = 6
-        reason = "Slightly ahead of S&P 500 benchmark"
+    elif alpha >= 0.0:
+        pts = 4
+        reason = "Roughly in line with or slightly ahead of S&P 500"
     elif alpha > -0.15:
         pts = -5
         reason = "Marginally trailing S&P 500"
@@ -100,24 +109,36 @@ def score_holding(
     if week_52_high and week_52_low and week_52_high > week_52_low:
         range_size = week_52_high - week_52_low
         pos = (price - week_52_low) / range_size
-        if pos < 0.15:
-            pts = 20
-            reason = f"Deeply oversold — only {pos*100:.0f}% from 52-week low"
-        elif pos < 0.30:
-            pts = 14
-            reason = f"Near 52-week low ({pos*100:.0f}% of range) — potential value"
-        elif pos < 0.50:
-            pts = 8
-            reason = "In lower half of 52-week range"
-        elif pos < 0.70:
-            pts = 2
-            reason = "Mid 52-week range"
-        elif pos < 0.88:
-            pts = -6
-            reason = f"In upper range ({pos*100:.0f}%) — limited upside near-term"
+        if is_index_tracker:
+            # For index ETFs, being near 52W high reflects market strength — neutral to positive
+            if pos >= 0.75:
+                pts = 4
+                reason = f"Near 52-week high ({pos*100:.0f}%) — index near all-time highs, market strength"
+            elif pos >= 0.40:
+                pts = 2
+                reason = f"Mid-to-upper 52-week range ({pos*100:.0f}%)"
+            else:
+                pts = -4
+                reason = f"In lower portion of 52-week range ({pos*100:.0f}%) — market in pullback"
         else:
-            pts = -12
-            reason = f"Near 52-week high ({pos*100:.0f}%) — potential overextension"
+            if pos < 0.15:
+                pts = 20
+                reason = f"Deeply oversold — only {pos*100:.0f}% from 52-week low"
+            elif pos < 0.30:
+                pts = 14
+                reason = f"Near 52-week low ({pos*100:.0f}% of range) — potential value"
+            elif pos < 0.50:
+                pts = 8
+                reason = "In lower half of 52-week range"
+            elif pos < 0.70:
+                pts = 2
+                reason = "Mid 52-week range"
+            elif pos < 0.88:
+                pts = -6
+                reason = f"In upper range ({pos*100:.0f}%) — limited upside near-term"
+            else:
+                pts = -12
+                reason = f"Near 52-week high ({pos*100:.0f}%) — potential overextension"
     score += pts
     reasons.append(reason)
     breakdown[factor] = {"points": pts, "max": FACTOR_MAX[factor], "reason": reason}

@@ -63,27 +63,26 @@ function HoldingCard({ h, idx }: { h: Holding; idx: number }) {
       transition={{ delay: idx * 0.04 }}
       className={cn("rounded-xl border overflow-hidden", meta.bg, meta.border, meta.glow)}
     >
-      {/* Main card content */}
       <div className="p-3.5 space-y-2.5">
         {/* Header row */}
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center", meta.bg, "border", meta.border)}>
-              <Icon className={cn("w-4 h-4", accentColor)} />
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className={cn("w-7 h-7 rounded-lg flex items-center justify-center shrink-0", meta.bg, "border", meta.border)}>
+              <Icon className={cn("w-3.5 h-3.5", accentColor)} />
             </div>
-            <div>
-              <div className="flex items-center gap-1.5">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
                 <span className="font-mono font-extrabold text-sm text-white">{h.ticker}</span>
-                <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-full border", REC_STYLES[h.recommendation])}>
+                <span className={cn("text-[9px] font-bold px-1.5 py-0.5 rounded-full border whitespace-nowrap", REC_STYLES[h.recommendation])}>
                   {h.recommendation}
                 </span>
               </div>
-              <p className="text-[10px] text-slate-500 leading-tight truncate max-w-[140px]">{h.name}</p>
+              <p className="text-[10px] text-slate-500 leading-tight truncate">{h.name}</p>
             </div>
           </div>
-          <div className="text-right shrink-0">
-            <p className="text-sm font-bold text-white font-mono">{formatCurrency(h.price)}</p>
-            <p className={cn("text-[11px] font-mono", gainColor(h.change_pct))}>{formatPct(h.change_pct)} today</p>
+          <div className="text-right shrink-0 ml-2">
+            <p className="text-sm font-bold text-white font-mono whitespace-nowrap">{formatCurrency(h.price)}</p>
+            <p className={cn("text-[10px] font-mono whitespace-nowrap", gainColor(h.change_pct))}>{formatPct(h.change_pct)} today</p>
           </div>
         </div>
 
@@ -91,16 +90,16 @@ function HoldingCard({ h, idx }: { h: Holding; idx: number }) {
         <Range52W price={h.price} low={h.week_52_low} high={h.week_52_high} />
 
         {/* Stats row */}
-        <div className="grid grid-cols-4 gap-1.5">
+        <div className="grid grid-cols-4 gap-1">
           {[
-            { label: "Gain",   value: formatPct(h.gain_pct),      color: gainColor(h.gain_pct) },
-            { label: "Alpha",  value: formatPct(h.alpha * 100),   color: gainColor(h.alpha) },
-            { label: "P/E",    value: h.pe_ratio ? h.pe_ratio.toFixed(1) + "x" : "—", color: "text-slate-300" },
-            { label: "Score",  value: (h.rec_score > 0 ? "+" : "") + h.rec_score, color: h.rec_score >= 28 ? "text-gain" : h.rec_score >= -8 ? "text-amber-400" : "text-loss" },
+            { label: "Gain",  value: formatPct(h.gain_pct),    color: gainColor(h.gain_pct) },
+            { label: "Alpha", value: formatPct(h.alpha * 100), color: gainColor(h.alpha) },
+            { label: "P/E",   value: h.pe_ratio ? h.pe_ratio.toFixed(1) + "x" : "—", color: "text-slate-300" },
+            { label: "Score", value: (h.rec_score > 0 ? "+" : "") + h.rec_score, color: h.rec_score >= 28 ? "text-gain" : h.rec_score >= -8 ? "text-amber-400" : "text-loss" },
           ].map(({ label, value, color }) => (
             <div key={label} className="bg-black/20 rounded-lg p-1.5 text-center">
-              <p className={cn("text-xs font-bold font-mono", color)}>{value}</p>
-              <p className="text-[9px] text-slate-600 uppercase tracking-wider">{label}</p>
+              <p className={cn("text-[11px] font-bold font-mono truncate", color)}>{value}</p>
+              <p className="text-[9px] text-slate-600 uppercase tracking-wide">{label}</p>
             </div>
           ))}
         </div>
@@ -115,19 +114,19 @@ function HoldingCard({ h, idx }: { h: Holding; idx: number }) {
           ))}
         </div>
 
-        {/* "What to do" label + breakdown toggle */}
+        {/* Action label + breakdown toggle */}
         <div className="flex items-center gap-2">
-          <div className={cn("flex-1 text-center text-[10px] font-semibold uppercase tracking-widest rounded-lg py-1.5 border", meta.bg, meta.border)}>
+          <div className={cn("flex-1 text-center text-[10px] font-bold uppercase tracking-wider rounded-lg py-1.5 border whitespace-nowrap", meta.bg, meta.border)}>
             <span className={accentColor}>{meta.label}</span>
           </div>
           <button
             onClick={() => setShowBreakdown(!showBreakdown)}
             className={cn(
-              "flex items-center gap-1 px-2 py-1.5 rounded-lg border text-[10px] font-semibold transition-colors",
+              "flex items-center gap-1 px-2 py-1.5 rounded-lg border text-[10px] font-semibold transition-colors whitespace-nowrap shrink-0",
               showBreakdown ? "bg-accent-blue/20 border-accent-blue/30 text-accent-blue" : "border-white/[0.08] text-slate-500 hover:text-slate-300"
             )}
           >
-            Score breakdown
+            Breakdown
             <ChevronDown className={cn("w-3 h-3 transition-transform", showBreakdown && "rotate-180")} />
           </button>
         </div>
