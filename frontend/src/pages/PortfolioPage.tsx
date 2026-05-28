@@ -129,11 +129,6 @@ export function PortfolioPage({ portfolio }: Props) {
         </div>
       </div>
 
-      {/* Analyst Report — always visible once data loaded */}
-      {!isLoading && activeHoldings.length > 0 && (
-        <AnalystReport holdings={activeHoldings} label={data?.label ?? "Portfolio"} />
-      )}
-
       {/* Exclusion banner */}
       {hasExclusions && (
         <motion.div
@@ -235,6 +230,9 @@ export function PortfolioPage({ portfolio }: Props) {
       {/* === OVERVIEW TAB === */}
       {activeTab === "overview" && !isLoading && activeHoldings.length > 0 && (
         <div className="space-y-5">
+
+          {/* Analyst Report lives at the top of the Overview tab */}
+          <AnalystReport holdings={activeHoldings} label={data?.label ?? "Portfolio"} />
 
           {/* Quick stats strip */}
           <motion.div

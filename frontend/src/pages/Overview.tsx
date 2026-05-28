@@ -5,7 +5,7 @@ import { Link } from "react-router-dom";
 import {
   DollarSign, TrendingUp, Activity, TrendingDown, ChevronRight,
   BarChart2, Shield, PieChart as PieIcon, Award, Zap, Compass,
-  RefreshCw,
+  RefreshCw, LayoutGrid,
 } from "lucide-react";
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
@@ -46,7 +46,7 @@ const AllocationTooltip = ({ active, payload }: any) => {
   );
 };
 
-type DashTab = "overview" | "discover";
+type DashTab = "overview" | "analytics" | "discover";
 
 export function Overview() {
   const [activeTab, setActiveTab] = useState<DashTab>("overview");
@@ -287,17 +287,13 @@ export function Overview() {
         </div>
       )}
 
-      {/* Overall analyst report — always visible */}
-      {!isLoading && allHoldings.length > 0 && (
-        <AnalystReport holdings={allHoldings} label="Total Portfolio" />
-      )}
-
-      {/* Tab nav for main content */}
+      {/* Tab nav */}
       {!isLoading && (
         <div className="flex gap-1 p-1 bg-[#0a1628] rounded-xl border border-white/[0.05] w-fit">
           {[
-            { id: "overview" as DashTab, label: "Analytics", icon: BarChart2 },
-            { id: "discover" as DashTab, label: "Stock Discovery", icon: Compass },
+            { id: "overview"  as DashTab, label: "Overview",       icon: LayoutGrid },
+            { id: "analytics" as DashTab, label: "Analytics",      icon: BarChart2 },
+            { id: "discover"  as DashTab, label: "Stock Discovery", icon: Compass },
           ].map(({ id, label, icon: Icon }) => (
             <button
               key={id}
@@ -315,8 +311,27 @@ export function Overview() {
         </div>
       )}
 
+      {/* === OVERVIEW TAB — Analyst Reports === */}
+      {activeTab === "overview" && !isLoading && allHoldings.length > 0 && (
+        <div className="space-y-5">
+          {/* Combined portfolio report */}
+          <AnalystReport holdings={allHoldings} label="Total Portfolio" />
+
+          {/* Per-account reports */}
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+            {Object.entries(portfolios).map(([key, p]) => {
+              const holds = p.holdings ?? [];
+              if (holds.length === 0) return null;
+              return (
+                <AnalystReport key={key} holdings={holds} label={p.label} />
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* === ANALYTICS TAB === */}
-      {activeTab === "overview" && !isLoading && (
+      {activeTab === "analytics" && !isLoading && (
         <div className="space-y-4">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* Allocation pie */}
