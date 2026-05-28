@@ -287,6 +287,11 @@ export function Overview() {
         </div>
       )}
 
+      {/* Overall analyst report — always visible */}
+      {!isLoading && allHoldings.length > 0 && (
+        <AnalystReport holdings={allHoldings} label="Total Portfolio" />
+      )}
+
       {/* Tab nav for main content */}
       {!isLoading && (
         <div className="flex gap-1 p-1 bg-[#0a1628] rounded-xl border border-white/[0.05] w-fit">
@@ -313,9 +318,6 @@ export function Overview() {
       {/* === ANALYTICS TAB === */}
       {activeTab === "overview" && !isLoading && (
         <div className="space-y-4">
-          {allHoldings.length > 0 && (
-            <AnalystReport holdings={allHoldings} label="Total Portfolio" />
-          )}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* Allocation pie */}
             <motion.div
