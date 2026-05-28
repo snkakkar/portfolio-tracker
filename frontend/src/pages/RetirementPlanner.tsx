@@ -35,7 +35,7 @@ const DEFAULT_INPUT: PlannerInput = {
   aggression_early: "aggressive",
   aggression_late: "moderate_aggressive",
   early_phase_years: 15,
-  target_monthly_income: 7500,
+  retirement_target_value: 20_000_000,
   inflation_rate: 0.03,
 };
 
@@ -130,20 +130,20 @@ function InputSection({
         </div>
       </label>
 
-      {/* Target income */}
+      {/* Retirement target */}
       <label className="block space-y-1.5">
-        <span className="text-[11px] text-slate-400 uppercase tracking-widest font-medium">Target Monthly Income in Retirement (today $)</span>
+        <span className="text-[11px] text-slate-400 uppercase tracking-widest font-medium">Retirement Target (total portfolio value)</span>
         <div className="relative">
           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">$</span>
           <input
             type="number"
-            value={input.target_monthly_income ?? 7500}
-            onChange={e => onChange("target_monthly_income", Number(e.target.value))}
+            value={input.retirement_target_value ?? 20_000_000}
+            onChange={e => onChange("retirement_target_value", Number(e.target.value))}
             className="w-full bg-white/[0.04] border border-white/[0.08] rounded-xl pl-6 pr-3 py-2.5 text-white text-sm focus:outline-none focus:border-accent-blue/50"
-            step={500} min={1000}
+            step={500_000} min={100_000}
           />
         </div>
-        <p className="text-[10px] text-slate-600">Will be inflation-adjusted to {input.retirement_age} using {(input.inflation_rate * 100).toFixed(1)}% annual inflation</p>
+        <p className="text-[10px] text-slate-600">At 4% withdrawal rate this implies ~${Math.round((input.retirement_target_value ?? 20_000_000) * 0.04 / 12).toLocaleString()}/mo in retirement income</p>
       </label>
 
       {/* Phase 1 strategy */}
@@ -319,7 +319,7 @@ function ResultDashboard({ result, input }: { result: PlannerResult; input: Plan
           {
             label: "Retirement Target",
             value: fmt$(result.retirement_target),
-            sub: `${fmt$(result.monthly_income_target_today)}/mo in today's dollars`,
+            sub: `~${fmt$(result.monthly_income_target_today)}/mo implied income (4% SWR)`,
             icon: Target,
             color: "text-accent-teal",
           },
@@ -405,12 +405,12 @@ function ResultDashboard({ result, input }: { result: PlannerResult; input: Plan
 
           <div className="pt-1 border-t border-white/[0.06] space-y-1">
             <div className="flex justify-between text-[11px]">
-              <span className="text-slate-500">Target monthly income (today)</span>
-              <span className="text-white font-medium">${result.monthly_income_target_today.toLocaleString()}/mo</span>
+              <span className="text-slate-500">Implied monthly income (today, 4% SWR)</span>
+              <span className="text-white font-medium">~${Math.round(result.monthly_income_target_today).toLocaleString()}/mo</span>
             </div>
             <div className="flex justify-between text-[11px]">
-              <span className="text-slate-500">Inflation-adjusted at retirement</span>
-              <span className="text-amber-400 font-medium">${Math.round(result.annual_income_target_future / 12).toLocaleString()}/mo</span>
+              <span className="text-slate-500">Implied monthly income (at retirement)</span>
+              <span className="text-amber-400 font-medium">~${Math.round(result.annual_income_target_future / 12).toLocaleString()}/mo</span>
             </div>
           </div>
         </div>

@@ -161,7 +161,7 @@ export interface PlannerInput {
   aggression_early: AggressionLevel;
   aggression_late: AggressionLevel;
   early_phase_years: number;
-  target_monthly_income: number | null;
+  retirement_target_value: number | null;
   inflation_rate: number;
 }
 

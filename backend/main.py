@@ -790,7 +790,7 @@ class PlannerInput(BaseModel):
     aggression_early: str = "aggressive"        # "aggressive" | "moderate_aggressive" | "moderate"
     aggression_late: str = "moderate_aggressive"
     early_phase_years: int = 15                 # how many years the "early" phase lasts
-    target_monthly_income: Optional[float] = None  # desired monthly income in retirement (today $)
+    retirement_target_value: Optional[float] = None  # desired total portfolio value at retirement
     inflation_rate: float = 0.03                # assumed annual inflation (default 3%)
 
 
@@ -909,14 +909,12 @@ def run_retirement_planner(body: PlannerInput):
     p90  = mc_results[int(n * 0.90)]
 
     # ── Retirement target ─────────────────────────────────────────────────────
-    # 4% withdrawal rule: portfolio = 25x desired annual income
-    # Inflate today's desired income to retirement date using assumed inflation
-    monthly_income_today = body.target_monthly_income or 7500.0  # $7,500/mo default (~$90k/yr)
-    annual_income_today  = monthly_income_today * 12
-    # Grow target to future dollars
     inflation = body.inflation_rate
-    annual_income_future = annual_income_today * ((1 + inflation) ** years_to_retirement)
-    retirement_target    = annual_income_future * 25   # 4% SWR
+    retirement_target = body.retirement_target_value or 20_000_000.0  # direct target portfolio value
+    # Derive implied monthly income from target using 4% SWR (for display)
+    annual_income_future = retirement_target * 0.04
+    annual_income_today  = annual_income_future / ((1 + inflation) ** years_to_retirement)
+    monthly_income_today = annual_income_today / 12
 
     # ── Simple deterministic projection (for year-by-year chart) ──────────────
     # Uses blended average return per year for a smooth curve
