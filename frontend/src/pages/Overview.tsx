@@ -15,6 +15,7 @@ import { api } from "@/api/client";
 import { SummaryCard } from "@/components/SummaryCard";
 import { RecBadge } from "@/components/RecBadge";
 import { StockDiscovery } from "@/components/StockDiscovery";
+import { AnalystReport } from "@/components/AnalystReport";
 import { SkeletonCard } from "@/components/Skeleton";
 import { formatCurrency, formatPct, gainColor, pieColors, formatMarketCap } from "@/lib/utils";
 import type { Holding } from "@/types";
@@ -312,6 +313,9 @@ export function Overview() {
       {/* === ANALYTICS TAB === */}
       {activeTab === "overview" && !isLoading && (
         <div className="space-y-4">
+          {allHoldings.length > 0 && (
+            <AnalystReport holdings={allHoldings} label="Total Portfolio" />
+          )}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* Allocation pie */}
             <motion.div
