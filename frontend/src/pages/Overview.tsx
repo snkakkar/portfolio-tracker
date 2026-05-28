@@ -311,23 +311,9 @@ export function Overview() {
         </div>
       )}
 
-      {/* === OVERVIEW TAB — Analyst Reports === */}
+      {/* === OVERVIEW TAB — Total Portfolio Analyst Report === */}
       {activeTab === "overview" && !isLoading && allHoldings.length > 0 && (
-        <div className="space-y-5">
-          {/* Combined portfolio report */}
-          <AnalystReport holdings={allHoldings} label="Total Portfolio" />
-
-          {/* Per-account reports */}
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-            {Object.entries(portfolios).map(([key, p]) => {
-              const holds = p.holdings ?? [];
-              if (holds.length === 0) return null;
-              return (
-                <AnalystReport key={key} holdings={holds} label={p.label} />
-              );
-            })}
-          </div>
-        </div>
+        <AnalystReport holdings={allHoldings} label="Total Portfolio" />
       )}
 
       {/* === ANALYTICS TAB === */}
