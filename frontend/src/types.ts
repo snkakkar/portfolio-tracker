@@ -238,6 +238,24 @@ export interface PlannerResult {
   assumptions: Record<string, string>;
 }
 
+// ─── Exited Positions ─────────────────────────────────────────────────────────
+
+export interface ExitedPosition {
+  id: string;
+  portfolio: string;
+  ticker: string;
+  shares: number;
+  cost_per_share: number;
+  purchase_date: string;
+  exit_price: number;
+  exit_date: string;
+  total_cost: number;
+  exit_value: number;
+  realized_gain: number;
+  realized_gain_pct: number;
+  hold_days: number | null;
+}
+
 export const PORTFOLIOS = [
   { key: "stocks", label: "Brokerage Stocks", icon: "TrendingUp" },
   { key: "etfs", label: "Brokerage ETFs", icon: "BarChart2" },

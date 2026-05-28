@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Pencil, Trash2, Check, X, ChevronUp, ChevronDown, Eye, EyeOff } from "lucide-react";
+import { Pencil, Trash2, Check, X, ChevronUp, ChevronDown, Eye, EyeOff, LogOut } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { cn, formatCurrency, formatPct, gainColor, gainBg, formatMarketCap } from "@/lib/utils";
 import { RecBadge } from "./RecBadge";
 import { PriceChart } from "./PriceChart";
 import { ScoreBreakdown } from "./ScoreBreakdown";
+import { ExitPositionModal } from "./ExitPositionModal";
 import type { Holding } from "@/types";
 import { api } from "@/api/client";
 
@@ -34,6 +35,7 @@ export function HoldingsTable({ holdings, portfolio, onRefresh, excluded = new S
   const [editState, setEditState] = useState<EditState>({ ticker: "", shares: "", purchase_date: "", cost_per_share: "" });
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [exitHolding, setExitHolding] = useState<Holding | null>(null);
 
   const updateMut = useMutation({
     mutationFn: ({ ticker, updates }: { ticker: string; updates: object }) =>
@@ -301,13 +303,22 @@ export function HoldingsTable({ holdings, portfolio, onRefresh, excluded = new S
                           <>
                             <button
                               onClick={(e) => { e.stopPropagation(); startEdit(h); }}
+                              title="Edit position"
                               className="w-6 h-6 flex items-center justify-center rounded bg-slate-700/50 hover:bg-accent-blue/20 hover:text-accent-blue text-slate-500 transition-colors"
                             >
                               <Pencil className="w-3 h-3" />
                             </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setExitHolding(h); }}
+                              title="Exit position (record sale)"
+                              className="w-6 h-6 flex items-center justify-center rounded bg-slate-700/50 hover:bg-amber-500/20 hover:text-amber-400 text-slate-500 transition-colors"
+                            >
+                              <LogOut className="w-3 h-3" />
+                            </button>
                             {confirmDelete === h.ticker ? (
                               <button
                                 onClick={() => deleteMut.mutate(h.ticker)}
+                                title="Confirm permanent delete"
                                 className="w-6 h-6 flex items-center justify-center rounded bg-loss/20 hover:bg-loss/30 text-loss transition-colors text-[10px] font-bold"
                               >
                                 ✓
@@ -315,6 +326,7 @@ export function HoldingsTable({ holdings, portfolio, onRefresh, excluded = new S
                             ) : (
                               <button
                                 onClick={(e) => { e.stopPropagation(); setConfirmDelete(h.ticker); setTimeout(() => setConfirmDelete(null), 3000); }}
+                                title="Delete (no record kept)"
                                 className="w-6 h-6 flex items-center justify-center rounded bg-slate-700/50 hover:bg-loss/20 hover:text-loss text-slate-500 transition-colors"
                               >
                                 <Trash2 className="w-3 h-3" />
@@ -434,5 +446,17 @@ export function HoldingsTable({ holdings, portfolio, onRefresh, excluded = new S
         </tbody>
       </table>
     </div>
+
+    {/* Exit position modal */}
+    {exitHolding && (
+      <ExitPositionModal
+        holding={exitHolding}
+        portfolio={portfolio}
+        onClose={() => {
+          setExitHolding(null);
+          onRefresh();
+        }}
+      />
+    )}
   );
 }

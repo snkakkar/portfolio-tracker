@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { AllPortfoliosData, PortfolioData, PriceBar, WatchItem, DiscoverStock, PortfolioSuggestion, PlannerInput, PlannerResult } from "@/types";
+import type { AllPortfoliosData, PortfolioData, PriceBar, WatchItem, DiscoverStock, PortfolioSuggestion, PlannerInput, PlannerResult, ExitedPosition } from "@/types";
 
 const BASE = "/api";
 
@@ -58,6 +58,16 @@ export const api = {
     suggestions: PortfolioSuggestion[];
     gaps: string[];
   }> => axios.get(`${BASE}/portfolio/${portfolio}/suggestions`).then((r) => r.data),
+
+  // Exited positions
+  exitHolding: (portfolio: string, ticker: string, exit_price: number, exit_date: string): Promise<ExitedPosition> =>
+    axios.post(`${BASE}/holdings/${portfolio}/${ticker}/exit`, { exit_price, exit_date }).then((r) => r.data),
+
+  getExitedPositions: (portfolio: string): Promise<{ positions: ExitedPosition[] }> =>
+    axios.get(`${BASE}/exited/${portfolio}`).then((r) => r.data),
+
+  deleteExitedPosition: (id: string): Promise<{ ok: boolean }> =>
+    axios.delete(`${BASE}/exited/${id}`).then((r) => r.data),
 
   // Retirement planner
   runPlanner: (input: PlannerInput): Promise<PlannerResult> =>

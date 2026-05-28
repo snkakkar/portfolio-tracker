@@ -390,6 +390,52 @@ def validate_ticker(ticker: str):
     return {"valid": True, "ticker": ticker.upper(), "name": quote["name"], "price": quote["price"]}
 
 
+# ─── Exited Positions ─────────────────────────────────────────────────────────
+
+class ExitIn(BaseModel):
+    exit_price: float
+    exit_date: str  # YYYY-MM-DD
+
+
+@app.post("/api/holdings/{portfolio}/{ticker}/exit")
+def exit_holding(portfolio: str, ticker: str, body: ExitIn):
+    """
+    Mark a position as exited (sold). Records are kept in a separate
+    exited list and are NOT the same as a delete.
+    """
+    _require_portfolio(portfolio)
+    if body.exit_price <= 0:
+        raise HTTPException(status_code=400, detail="exit_price must be positive")
+    try:
+        record = h_store.exit_holding(portfolio, ticker.upper(), body.exit_price, body.exit_date)
+        return record
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/api/exited")
+def get_all_exited():
+    """Returns all exited positions across every portfolio."""
+    return {"positions": h_store.get_exited()}
+
+
+@app.get("/api/exited/{portfolio}")
+def get_portfolio_exited(portfolio: str):
+    """Returns exited positions for a specific portfolio."""
+    _require_portfolio(portfolio)
+    return {"positions": h_store.get_exited(portfolio)}
+
+
+@app.delete("/api/exited/{record_id}")
+def delete_exited_position(record_id: str):
+    """Permanently remove an exited position record."""
+    try:
+        h_store.delete_exited(record_id)
+        return {"ok": True}
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 # ─── Stock Discovery ──────────────────────────────────────────────────────────
 
 # Curated universe of high-quality stocks across sectors for discovery

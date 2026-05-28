@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import {
   DollarSign, TrendingUp, Activity, Plus, RefreshCw,
   BarChart2, Award, LayoutGrid, Target, ArrowUpRight, ArrowDownRight,
-  Layers, EyeOff, X,
+  Layers, EyeOff, X, LogOut,
 } from "lucide-react";
 import { api } from "@/api/client";
 import { SummaryCard } from "@/components/SummaryCard";
@@ -15,6 +15,7 @@ import { RecBadge } from "@/components/RecBadge";
 import { MetricsPanel } from "@/components/MetricsPanel";
 import { RecommendationsPanel } from "@/components/RecommendationsPanel";
 import { AnalystReport } from "@/components/AnalystReport";
+import { ClosedPositionsTable } from "@/components/ClosedPositionsTable";
 import { AddPositionModal } from "@/components/AddPositionModal";
 import { SkeletonCard, SkeletonTable } from "@/components/Skeleton";
 import { formatCurrency, formatPct, gainColor } from "@/lib/utils";
@@ -24,12 +25,13 @@ interface Props {
   portfolio: PortfolioKey;
 }
 
-type Tab = "overview" | "analytics" | "recommendations";
+type Tab = "overview" | "analytics" | "recommendations" | "closed";
 
 const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
-  { id: "overview",        label: "Overview",        icon: LayoutGrid },
-  { id: "analytics",       label: "Analytics",       icon: BarChart2 },
-  { id: "recommendations", label: "Recommendations", icon: Target },
+  { id: "overview",        label: "Overview",         icon: LayoutGrid },
+  { id: "analytics",       label: "Analytics",        icon: BarChart2 },
+  { id: "recommendations", label: "Recommendations",  icon: Target },
+  { id: "closed",          label: "Closed Positions", icon: LogOut },
 ];
 
 export function PortfolioPage({ portfolio }: Props) {
@@ -420,6 +422,11 @@ export function PortfolioPage({ portfolio }: Props) {
       {/* === RECOMMENDATIONS TAB === */}
       {activeTab === "recommendations" && !isLoading && (
         <RecommendationsPanel holdings={activeHoldings} portfolio={portfolio} delay={0.05} />
+      )}
+
+      {/* === CLOSED POSITIONS TAB === */}
+      {activeTab === "closed" && !isLoading && (
+        <ClosedPositionsTable portfolio={portfolio} />
       )}
 
       {/* Loading state for tabs */}
