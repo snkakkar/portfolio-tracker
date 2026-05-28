@@ -377,20 +377,22 @@ function ResultDashboard({ result, input }: { result: PlannerResult; input: Plan
   const surplus = result.annual_savings_surplus_deficit;
   const surplusPositive = surplus >= 0;
 
-  // Build chart data — show yearly projection with target line
+  const hasExternal = result.external_breakdown.total_external > 0;
+
+  // Deterministic projection — two series
   const chartData = result.yearly_projection.map(pt => ({
     age: pt.age,
-    value: Math.round(pt.value),
-    label: `Age ${pt.age}`,
+    total: Math.round(pt.value),
+    tracked: Math.round(pt.tracked),
   }));
 
-  // MC fan chart data
+  // MC grouped bar data — total net worth vs tracked-only side by side
   const mcData = [
-    { label: "Bear (p10)",    value: result.mc_p10,  fill: "#ef4444" },
-    { label: "Low (p25)",     value: result.mc_p25,  fill: "#f97316" },
-    { label: "Median (p50)",  value: result.mc_p50,  fill: "#3b82f6" },
-    { label: "High (p75)",    value: result.mc_p75,  fill: "#10b981" },
-    { label: "Bull (p90)",    value: result.mc_p90,  fill: "#6366f1" },
+    { label: "Bear (p10)",   total: result.mc_p10,  tracked: result.tracked_mc_p10 },
+    { label: "Low (p25)",    total: result.mc_p25,  tracked: result.tracked_mc_p25 },
+    { label: "Median (p50)", total: result.mc_p50,  tracked: result.tracked_mc_p50 },
+    { label: "High (p75)",   total: result.mc_p75,  tracked: result.tracked_mc_p75 },
+    { label: "Bull (p90)",   total: result.mc_p90,  tracked: result.tracked_mc_p90 },
   ];
 
   const sectorData = Object.entries(result.sector_weights_pct)
@@ -464,16 +466,34 @@ function ResultDashboard({ result, input }: { result: PlannerResult; input: Plan
           <p className="text-[10px] text-slate-500 uppercase tracking-widest font-medium mb-4">
             Probability of Success (700 simulations)
           </p>
-          <GaugeMeter prob={result.prob_success} />
+          {hasExternal ? (
+            <div className="grid grid-cols-2 gap-4 w-full">
+              <div className="flex flex-col items-center">
+                <p className="text-[10px] text-accent-blue mb-1">Total Net Worth</p>
+                <GaugeMeter prob={result.prob_success} />
+              </div>
+              <div className="flex flex-col items-center">
+                <p className="text-[10px] text-accent-teal mb-1">Tracked Portfolio</p>
+                <GaugeMeter prob={result.tracked_prob_success} />
+              </div>
+            </div>
+          ) : (
+            <GaugeMeter prob={result.prob_success} />
+          )}
           <div className="mt-4 w-full grid grid-cols-3 gap-2 text-center">
             {[
-              { label: "Bear p10", val: result.mc_p10, color: "text-red-400" },
-              { label: "Median p50", val: result.mc_p50, color: "text-blue-400" },
-              { label: "Bull p90", val: result.mc_p90, color: "text-emerald-400" },
+              { label: "Bear p10",    val: result.mc_p10,  color: "text-red-400" },
+              { label: "Median p50",  val: result.mc_p50,  color: "text-blue-400" },
+              { label: "Bull p90",    val: result.mc_p90,  color: "text-emerald-400" },
             ].map(({ label, val, color }) => (
               <div key={label} className="bg-white/[0.03] rounded-xl p-2">
                 <div className={cn("text-sm font-bold", color)}>{fmt$(val)}</div>
                 <div className="text-[10px] text-slate-600">{label}</div>
+                {hasExternal && (
+                  <div className="text-[9px] text-slate-700 mt-0.5">
+                    tracked: {fmt$(label === "Bear p10" ? result.tracked_mc_p10 : label === "Median p50" ? result.tracked_mc_p50 : result.tracked_mc_p90)}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -529,12 +549,18 @@ function ResultDashboard({ result, input }: { result: PlannerResult; input: Plan
             Deterministic Growth Projection (blended expected returns)
           </p>
           <div className="flex items-center gap-4 text-[10px]">
+            {hasExternal && (
+              <span className="flex items-center gap-1.5 text-slate-400">
+                <span className="w-3 h-0.5 bg-accent-blue rounded-full inline-block" />
+                Total net worth
+              </span>
+            )}
             <span className="flex items-center gap-1.5 text-slate-400">
-              <span className="w-3 h-0.5 bg-accent-blue rounded-full inline-block" />
-              Portfolio value
+              <span className="w-3 h-0.5 bg-accent-teal rounded-full inline-block" />
+              {hasExternal ? "Tracked portfolio" : "Portfolio value"}
             </span>
             <span className="flex items-center gap-1.5 text-slate-400">
-              <span className="w-3 h-0.5 bg-red-400 rounded-full inline-block border-dashed" />
+              <span className="w-3 h-0.5 bg-red-400 rounded-full inline-block" style={{ borderTop: "2px dashed" }} />
               Target
             </span>
           </div>
@@ -542,25 +568,24 @@ function ResultDashboard({ result, input }: { result: PlannerResult; input: Plan
         <ResponsiveContainer width="100%" height={240}>
           <AreaChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
             <defs>
-              <linearGradient id="projGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%"  stopColor="#3b82f6" stopOpacity={0.3} />
+              <linearGradient id="projGradTotal" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%"  stopColor="#3b82f6" stopOpacity={0.25} />
                 <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.0} />
+              </linearGradient>
+              <linearGradient id="projGradTracked" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%"  stopColor="#14b8a6" stopOpacity={0.2} />
+                <stop offset="95%" stopColor="#14b8a6" stopOpacity={0.0} />
               </linearGradient>
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-            <XAxis
-              dataKey="age"
-              tick={{ fontSize: 10, fill: "#64748b" }}
-              tickFormatter={v => `${v}`}
-            />
-            <YAxis
-              tick={{ fontSize: 10, fill: "#64748b" }}
-              tickFormatter={v => fmt$(v)}
-              width={54}
-            />
+            <XAxis dataKey="age" tick={{ fontSize: 10, fill: "#64748b" }} />
+            <YAxis tick={{ fontSize: 10, fill: "#64748b" }} tickFormatter={v => fmt$(v)} width={54} />
             <Tooltip
               contentStyle={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 10, fontSize: 12 }}
-              formatter={(v: number) => [fmt$(v), "Projected value"]}
+              formatter={(v: number, name: string) => [
+                fmt$(v),
+                name === "total" ? "Total net worth" : "Tracked portfolio",
+              ]}
               labelFormatter={v => `Age ${v}`}
             />
             <ReferenceLine
@@ -570,13 +595,27 @@ function ResultDashboard({ result, input }: { result: PlannerResult; input: Plan
               strokeOpacity={0.6}
               label={{ value: "Target", fill: "#ef4444", fontSize: 10, position: "insideTopRight" }}
             />
+            {/* Show total only when external assets exist */}
+            {hasExternal && (
+              <Area
+                type="monotone"
+                dataKey="total"
+                stroke="#3b82f6"
+                strokeWidth={2}
+                fill="url(#projGradTotal)"
+                dot={false}
+                name="total"
+              />
+            )}
             <Area
               type="monotone"
-              dataKey="value"
-              stroke="#3b82f6"
-              strokeWidth={2}
-              fill="url(#projGrad)"
+              dataKey="tracked"
+              stroke="#14b8a6"
+              strokeWidth={hasExternal ? 1.5 : 2}
+              strokeDasharray={hasExternal ? "4 2" : undefined}
+              fill={hasExternal ? "none" : "url(#projGradTracked)"}
               dot={false}
+              name="tracked"
             />
           </AreaChart>
         </ResponsiveContainer>
@@ -588,18 +627,36 @@ function ResultDashboard({ result, input }: { result: PlannerResult; input: Plan
           <p className="text-[10px] text-slate-500 uppercase tracking-widest font-medium">
             Monte Carlo Outcome Range (700 simulations)
           </p>
-          <span className="text-[10px] text-slate-600 bg-white/[0.04] px-2 py-1 rounded-full">
-            Probability of reaching target: <span className="text-white font-semibold">{result.prob_success}%</span>
-          </span>
+          <div className="flex items-center gap-3 text-[10px]">
+            {hasExternal && (
+              <span className="flex items-center gap-1.5 text-slate-400">
+                <span className="w-2.5 h-2.5 rounded-sm bg-accent-blue/70 inline-block" />
+                Total net worth
+              </span>
+            )}
+            <span className="flex items-center gap-1.5 text-slate-400">
+              <span className="w-2.5 h-2.5 rounded-sm bg-accent-teal/70 inline-block" />
+              Tracked portfolio
+            </span>
+            <span className="text-slate-600 bg-white/[0.04] px-2 py-0.5 rounded-full">
+              Success: <span className="text-white font-semibold">{result.prob_success}%</span>
+              {hasExternal && (
+                <span className="text-slate-500"> · tracked: <span className="text-slate-300">{result.tracked_prob_success}%</span></span>
+              )}
+            </span>
+          </div>
         </div>
-        <ResponsiveContainer width="100%" height={180}>
-          <BarChart data={mcData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+        <ResponsiveContainer width="100%" height={200}>
+          <BarChart data={mcData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }} barCategoryGap="20%" barGap={3}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
             <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#64748b" }} />
             <YAxis tick={{ fontSize: 10, fill: "#64748b" }} tickFormatter={v => fmt$(v)} width={54} />
             <Tooltip
               contentStyle={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 10, fontSize: 12 }}
-              formatter={(v: number) => [fmt$(v), "Portfolio value"]}
+              formatter={(v: number, name: string) => [
+                fmt$(v),
+                name === "total" ? "Total net worth" : "Tracked portfolio",
+              ]}
             />
             <ReferenceLine
               y={result.retirement_target}
@@ -608,11 +665,10 @@ function ResultDashboard({ result, input }: { result: PlannerResult; input: Plan
               strokeOpacity={0.6}
               label={{ value: "Target", fill: "#ef4444", fontSize: 10, position: "insideTopRight" }}
             />
-            <Bar dataKey="value" radius={[6, 6, 0, 0]}>
-              {mcData.map((entry) => (
-                <Cell key={entry.label} fill={entry.fill} opacity={0.8} />
-              ))}
-            </Bar>
+            {hasExternal && (
+              <Bar dataKey="total" fill="#3b82f6" fillOpacity={0.8} radius={[4, 4, 0, 0]} name="total" />
+            )}
+            <Bar dataKey="tracked" fill="#14b8a6" fillOpacity={0.8} radius={[4, 4, 0, 0]} name="tracked" />
           </BarChart>
         </ResponsiveContainer>
       </div>

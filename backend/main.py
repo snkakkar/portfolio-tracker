@@ -918,60 +918,67 @@ def run_retirement_planner(body: PlannerInput):
 
     early_phase_years = min(body.early_phase_years, years_to_retirement)
 
-    # ── Monte Carlo ───────────────────────────────────────────────────────────
-    mc_results = _run_monte_carlo(
-        start_value=total_value,
-        annual_savings=body.annual_savings,
-        years=years_to_retirement,
-        early_phase_years=early_phase_years,
-        mu_early=mu_e,
-        sigma_early=sig_e,
-        mu_late=mu_l,
-        sigma_late=sig_l,
-        simulations=700,
-    )
-
-    n = len(mc_results)
-    p10  = mc_results[int(n * 0.10)]
-    p25  = mc_results[int(n * 0.25)]
-    p50  = mc_results[int(n * 0.50)]
-    p75  = mc_results[int(n * 0.75)]
-    p90  = mc_results[int(n * 0.90)]
-
     # ── Retirement target ─────────────────────────────────────────────────────
     inflation = body.inflation_rate
-    retirement_target = body.retirement_target_value or 20_000_000.0  # direct target portfolio value
-    # Derive implied monthly income from target using 4% SWR (for display)
+    retirement_target = body.retirement_target_value or 20_000_000.0
     annual_income_future = retirement_target * 0.04
     annual_income_today  = annual_income_future / ((1 + inflation) ** years_to_retirement)
     monthly_income_today = annual_income_today / 12
 
-    # ── Simple deterministic projection (for year-by-year chart) ──────────────
-    # Uses blended average return per year for a smooth curve
+    mc_kwargs = dict(
+        annual_savings=body.annual_savings,
+        years=years_to_retirement,
+        early_phase_years=early_phase_years,
+        mu_early=mu_e, sigma_early=sig_e,
+        mu_late=mu_l,  sigma_late=sig_l,
+        simulations=700,
+    )
+
+    # ── Monte Carlo — Total net worth (tracked + external) ───────────────────
+    mc_total = _run_monte_carlo(start_value=total_value, **mc_kwargs)
+    n = len(mc_total)
+    p10  = mc_total[int(n * 0.10)]
+    p25  = mc_total[int(n * 0.25)]
+    p50  = mc_total[int(n * 0.50)]
+    p75  = mc_total[int(n * 0.75)]
+    p90  = mc_total[int(n * 0.90)]
+
+    # ── Monte Carlo — Tracked portfolio only ─────────────────────────────────
+    mc_tracked = _run_monte_carlo(start_value=tracked_portfolio_value, **mc_kwargs)
+    nt = len(mc_tracked)
+    tp10 = mc_tracked[int(nt * 0.10)]
+    tp25 = mc_tracked[int(nt * 0.25)]
+    tp50 = mc_tracked[int(nt * 0.50)]
+    tp75 = mc_tracked[int(nt * 0.75)]
+    tp90 = mc_tracked[int(nt * 0.90)]
+
+    # ── Probability of success (based on total net worth) ────────────────────
+    success_count = sum(1 for v in mc_total if v >= retirement_target)
+    prob_success  = round(success_count / len(mc_total) * 100, 1)
+    # Tracked-only success probability
+    tracked_success_count = sum(1 for v in mc_tracked if v >= retirement_target)
+    tracked_prob_success  = round(tracked_success_count / len(mc_tracked) * 100, 1)
+
+    # ── Deterministic projection — both series ────────────────────────────────
     yearly_values: list[dict] = []
-    det_value = total_value
+    det_total   = total_value
+    det_tracked = tracked_portfolio_value
     for yr in range(years_to_retirement + 1):
         yearly_values.append({
-            "age": body.current_age + yr,
-            "year": datetime.now().year + yr,
-            "value": round(det_value, 0),
+            "age":     body.current_age + yr,
+            "year":    datetime.now().year + yr,
+            "value":   round(det_total, 0),
+            "tracked": round(det_tracked, 0),
         })
         if yr < years_to_retirement:
-            det_value += body.annual_savings
             r = mu_e if yr < early_phase_years else mu_l
-            det_value *= (1 + r)
+            # Both series grow at the same rate; savings attributed to tracked portfolio
+            det_total   = (det_total   + body.annual_savings) * (1 + r)
+            det_tracked = (det_tracked + body.annual_savings) * (1 + r)
 
-    # ── Probability of success ────────────────────────────────────────────────
-    success_count = sum(1 for v in mc_results if v >= retirement_target)
-    prob_success  = round(success_count / len(mc_results) * 100, 1)
-
-    # ── Savings needed to guarantee (p50) hitting target ─────────────────────
-    # Binary-search for required annual savings to achieve p50 >= target
-    # Quick closed-form estimate with blended return
+    # ── Savings needed to hit target (based on total net worth) ───────────────
     blended_r = (mu_e * early_phase_years + mu_l * max(0, years_to_retirement - early_phase_years)) / years_to_retirement
-    # FV of current lump sum
     fv_lump = total_value * ((1 + blended_r) ** years_to_retirement)
-    # FV of annual contributions (annuity-due)
     if blended_r > 0:
         fv_annuity_per_dollar = ((1 + blended_r) ** years_to_retirement - 1) / blended_r * (1 + blended_r)
     else:
@@ -1141,12 +1148,20 @@ def run_retirement_planner(body: PlannerInput):
         "annual_income_target_future": round(annual_income_future, 0),
 
         # Monte Carlo results
+        # Total net worth projections (tracked + external)
         "mc_p10": round(p10, 0),
         "mc_p25": round(p25, 0),
         "mc_p50": round(p50, 0),
         "mc_p75": round(p75, 0),
         "mc_p90": round(p90, 0),
         "prob_success": prob_success,
+        # Tracked portfolio only projections
+        "tracked_mc_p10": round(tp10, 0),
+        "tracked_mc_p25": round(tp25, 0),
+        "tracked_mc_p50": round(tp50, 0),
+        "tracked_mc_p75": round(tp75, 0),
+        "tracked_mc_p90": round(tp90, 0),
+        "tracked_prob_success": tracked_prob_success,
 
         # Savings analysis
         "annual_savings": body.annual_savings,

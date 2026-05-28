@@ -189,7 +189,8 @@ export interface PlannerRecommendation {
 export interface YearlyProjection {
   age: number;
   year: number;
-  value: number;
+  value: number;    // total net worth
+  tracked: number;  // tracked portfolio only
 }
 
 export interface ExternalBreakdown {
@@ -218,6 +219,12 @@ export interface PlannerResult {
   mc_p75: number;
   mc_p90: number;
   prob_success: number;
+  tracked_mc_p10: number;
+  tracked_mc_p25: number;
+  tracked_mc_p50: number;
+  tracked_mc_p75: number;
+  tracked_mc_p90: number;
+  tracked_prob_success: number;
   annual_savings: number;
   required_annual_savings: number;
   annual_savings_surplus_deficit: number;
