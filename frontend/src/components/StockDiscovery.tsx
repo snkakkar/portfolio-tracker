@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   TrendingUp, TrendingDown, Minus, XCircle, ChevronRight, Compass,
@@ -63,7 +64,13 @@ function DiscoverCard({ stock, idx }: { stock: DiscoverStock; idx: number }) {
         {/* Ticker + name */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-mono font-extrabold text-sm text-white">{stock.ticker}</span>
+            <Link
+              to={`/equity/${stock.ticker}`}
+              onClick={(e) => e.stopPropagation()}
+              className="font-mono font-extrabold text-sm text-white hover:text-accent-blue hover:underline underline-offset-2"
+            >
+              {stock.ticker}
+            </Link>
             <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-full border flex items-center gap-1", recClass)}>
               <Icon className="w-2.5 h-2.5" />
               {stock.recommendation}

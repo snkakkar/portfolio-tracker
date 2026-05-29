@@ -7,6 +7,7 @@ import { PortfolioPage } from "@/pages/PortfolioPage";
 import { WatchlistPage } from "@/pages/WatchlistPage";
 import { RetirementPlanner } from "@/pages/RetirementPlanner";
 import ImportExportPage from "@/pages/ImportExportPage";
+import { EquityDetailPage } from "@/pages/EquityDetailPage";
 
 function DynamicPortfolioPage() {
   const { key } = useParams<{ key: string }>();
@@ -40,6 +41,8 @@ function AnimatedRoutes() {
           <Route path="/watchlist" element={<WatchlistPage />} />
           <Route path="/planner" element={<RetirementPlanner />} />
           <Route path="/import" element={<ImportExportPage />} />
+          {/* Equity detail (skinny Yahoo-style view) */}
+          <Route path="/equity/:ticker" element={<EquityDetailPage />} />
           {/* Dynamic route for custom portfolios */}
           <Route path="/portfolio/:key" element={<DynamicPortfolioPage />} />
         </Routes>

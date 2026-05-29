@@ -5,11 +5,12 @@ import { api } from "@/api/client";
 import { formatCurrency } from "@/lib/utils";
 
 const PERIODS = [
+  { label: "1D", value: "1d" },
+  { label: "5D", value: "5d" },
   { label: "1M", value: "1mo" },
-  { label: "3M", value: "3mo" },
   { label: "6M", value: "6mo" },
   { label: "1Y", value: "1y" },
-  { label: "2Y", value: "2y" },
+  { label: "3Y", value: "3y" },
   { label: "5Y", value: "5y" },
 ];
 
@@ -79,7 +80,11 @@ export function PriceChart({ ticker }: Props) {
               axisLine={false}
               tickLine={false}
               interval="preserveStartEnd"
-              tickFormatter={(d) => d.slice(5)}
+              tickFormatter={(d: string) => {
+                // Intraday format: "YYYY-MM-DD HH:MM" → show "HH:MM" for 1D, "MM-DD" otherwise.
+                if (period === "1d" && d.includes(" ")) return d.split(" ")[1] ?? d;
+                return d.slice(5, 10);
+              }}
             />
             <YAxis
               tick={{ fill: "#475569", fontSize: 10 }}

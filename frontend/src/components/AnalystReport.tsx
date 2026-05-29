@@ -5,15 +5,75 @@ import {
   ChevronDown, ChevronUp, BarChart2, Target, Zap, Shield,
   Layers, PieChart,
 } from "lucide-react";
-import { cn, formatPct } from "@/lib/utils";
-import type { Holding } from "@/types";
+import { cn, formatCurrency, formatPct, computeAlpha } from "@/lib/utils";
+import { loadPlannerInput } from "@/lib/portfolioFit";
+import type { Holding, PortfolioSummary } from "@/types";
 
 interface Props {
   holdings: Holding[];
   label: string;
+  /**
+   * When provided (server-aggregated or recomputed for the active subset), the
+   * report uses cumulative $ alpha + value-weighted alpha % as the canonical
+   * figures. When omitted, falls back to the local computeAlpha helper.
+   */
+  summary?: Pick<PortfolioSummary, "cumulative_alpha_dollar" | "weighted_alpha_pct"> | null;
 }
 
 // ─── Quantitative grade model ────────────────────────────────────────────────
+
+/**
+ * Smoothed-tier scorer: turns sharp numeric thresholds into a piecewise-linear
+ * curve so a value sitting 0.3% under a tier's cutoff doesn't lose 100% of its
+ * upper-tier credit.
+ *
+ * `tiers` is an ordered list of (cutoff, points) pairs sorted ascending by
+ * cutoff. The function finds where `value` sits relative to those cutoffs and
+ * linearly interpolates between adjacent points within ±`band` of any cutoff.
+ *
+ *   smoothedTier(4.89, [[0, -4], [5, 10], [10, 16], [15, 22]])  → 9.78
+ *   smoothedTier(5.50, ...)  → 10  (clean tier — no smoothing needed)
+ *
+ * Margin (default 0.5) is the half-width of the smoothing band: with a tier
+ * cutoff at 5 and band 0.5, values from 4.5..5.5 interpolate between the two
+ * adjacent tiers' points; outside that band each tier returns its own points.
+ */
+function smoothedTier(
+  value: number,
+  tiers: [number, number][],   // [cutoff, points], sorted ascending by cutoff
+  band: number = 0.5,
+): number {
+  if (tiers.length === 0) return 0;
+
+  // Below the lowest cutoff → use the lowest tier's points (no tier below it).
+  if (value < tiers[0][0]) return tiers[0][1];
+
+  // Find the highest tier whose cutoff is ≤ value (the "current" tier).
+  // Then check whether value sits within ±band of an adjacent cutoff for blending.
+  for (let i = 0; i < tiers.length; i++) {
+    const [cutoff, pts] = tiers[i];
+    const next = tiers[i + 1];
+
+    if (next && value >= cutoff && value < next[0]) {
+      // value is in tier i (between cutoff[i] and cutoff[i+1])
+      const distToNext = next[0] - value;
+      if (distToNext <= band) {
+        // blend toward the next tier — linear over the band, so a value
+        // exactly `band` below the next cutoff still earns this tier's points,
+        // a value at the cutoff would (in the limit) earn the next tier's,
+        // and the in-between gives partial credit.
+        const t = (band - distToNext) / band;  // 0 at edge of band, 1 at cutoff
+        return pts + (next[1] - pts) * t;
+      }
+      return pts;
+    }
+    if (!next && value >= cutoff) {
+      // value is in the highest tier — no upper tier to blend toward.
+      return pts;
+    }
+  }
+  return tiers[tiers.length - 1][1];
+}
 
 interface ReportData {
   score: number;
@@ -29,14 +89,27 @@ interface ReportData {
   metrics: { label: string; value: string; color: string }[];
 }
 
-function buildReport(holdings: Holding[], label: string): ReportData | null {
+function buildReport(
+  holdings: Holding[],
+  label: string,
+  summary: Props["summary"] | undefined,
+): ReportData | null {
   if (!holdings.length) return null;
 
   const totalValue = holdings.reduce((s, h) => s + h.current_value, 0);
   if (totalValue === 0) return null;
 
   // ── Core metrics ──────────────────────────────────────────────────────────
-  const avgAlpha = holdings.reduce((s, h) => s + h.alpha * 100, 0) / holdings.length;
+  // Use server summary when provided (true portfolio-level numbers); otherwise
+  // recompute from the active subset so excluded rows drop out cleanly.
+  const alpha = summary
+    ? { weighted_alpha_pct: summary.weighted_alpha_pct, cumulative_alpha_dollar: summary.cumulative_alpha_dollar }
+    : (() => {
+        const a = computeAlpha(holdings);
+        return { weighted_alpha_pct: a.weighted_alpha_pct, cumulative_alpha_dollar: a.cumulative_alpha_dollar };
+      })();
+  const avgAlpha = alpha.weighted_alpha_pct;
+  const cumAlphaDollar = alpha.cumulative_alpha_dollar;
   const avgGainPct = holdings.reduce((s, h) => s + h.gain_pct, 0) / holdings.length;
 
   const betaHoldings = holdings.filter((h) => h.beta !== null);
@@ -44,103 +117,265 @@ function buildReport(holdings: Holding[], label: string): ReportData | null {
     ? betaHoldings.reduce((s, h) => s + h.beta! * (h.current_value / totalValue), 0)
     : null;
 
-  const winRate = (holdings.filter((h) => h.gain > 0).length / holdings.length) * 100;
+  // Pull retirement profile so beta/equity scoring can be horizon-aware on
+  // retirement-tagged portfolios. Brokerage / unlabelled portfolios get the
+  // generic curve (no horizon assumption) — we don't presume the user is
+  // saving brokerage money for retirement.
+  const planner = loadPlannerInput();
+  const yearsToRetirement = planner ? Math.max(0, planner.retirement_age - planner.current_age) : null;
+  const isRetirementPortfolio = label.toLowerCase().includes("retirement");
+  type Horizon = "long" | "mid" | "short" | "generic";
+  const horizon: Horizon =
+    !planner || !isRetirementPortfolio || yearsToRetirement === null
+      ? "generic"
+      : yearsToRetirement >= 15 ? "long"
+      : yearsToRetirement >= 7  ? "mid"
+      :                            "short";
+
+  // Weight-aware win rate: a 0.5% loser shouldn't drag the grade as hard as a
+  // 30% loser. Compute both — show count-based to the user (familiar) but use
+  // weighted % for scoring.
+  const winnersByCount = holdings.filter((h) => h.gain > 0).length;
+  const winRate = (winnersByCount / holdings.length) * 100;
+  const winnersValuePct =
+    holdings.filter((h) => h.gain > 0).reduce((s, h) => s + h.current_value, 0) / totalValue * 100;
 
   const sortedByWeight = [...holdings].sort((a, b) => b.current_value - a.current_value);
   const top1Pct = (sortedByWeight[0]?.current_value / totalValue) * 100;
   const top3Pct = sortedByWeight.slice(0, 3).reduce((s, h) => s + h.current_value / totalValue * 100, 0);
-  const top1Ticker = sortedByWeight[0]?.ticker ?? "";
+  const top1 = sortedByWeight[0];
+  const top1Ticker = top1?.ticker ?? "";
+  const top1Rec = top1?.recommendation;
 
-  const sectors = holdings.map((h) => h.sector).filter(Boolean) as string[];
-  const sectorCounts: Record<string, number> = {};
-  sectors.forEach((s) => { sectorCounts[s] = (sectorCounts[s] || 0) + 1; });
-  const sectorCount = Object.keys(sectorCounts).length;
-  const topSector = Object.entries(sectorCounts).sort((a, b) => b[1] - a[1])[0];
-  const topSectorPct = topSector ? (topSector[1] / holdings.length) * 100 : 0;
+  // Concentration is only "risk" when the model thinks the top position should
+  // shrink. A 30% NVDA position rated STRONG BUY isn't a problem to trim — it's
+  // your highest-conviction bet. Use this to weight every concentration-based
+  // signal (score, narrative, risks panel, action queue).
+  const top1IsConvicted = top1Rec === "STRONG BUY" || top1Rec === "BUY";
+  const top1IsSell      = top1Rec === "SELL"       || top1Rec === "STRONG SELL";
+
+  // Top-3 conviction: how much of the top-3 weight is in BUY-rated names?
+  // High share = "concentration in conviction"; low share = real concentration risk.
+  const top3 = sortedByWeight.slice(0, 3);
+  const top3Value = top3.reduce((s, h) => s + h.current_value, 0);
+  const top3BuyValue = top3
+    .filter((h) => h.recommendation === "STRONG BUY" || h.recommendation === "BUY")
+    .reduce((s, h) => s + h.current_value, 0);
+  const top3ConvictionPct = top3Value > 0 ? (top3BuyValue / top3Value) * 100 : 0;
+
+  // Sector totals by *value*, not headcount. A "Broad Market" tag (VOO, VTI,
+  // QQQ, etc.) is inherently multi-sector — we exclude it from the concentration
+  // math so a portfolio anchored in VOO doesn't get penalised as "0 sectors".
+  const BROAD_MARKET = "Broad Market";
+  const sectorValues: Record<string, number> = {};
+  let broadMarketValue = 0;
+  holdings.forEach((h) => {
+    if (!h.sector) return;
+    if (h.sector === BROAD_MARKET) broadMarketValue += h.current_value;
+    else sectorValues[h.sector] = (sectorValues[h.sector] || 0) + h.current_value;
+  });
+  const broadMarketPct = (broadMarketValue / totalValue) * 100;
+  // Effective sector count: named sectors + a small "diversified" boost when
+  // broad-market exposure is meaningful. Tightened from the original +5/+2
+  // because boosting a single VOO holding to "5 sectors" was too generous —
+  // a real 5-sector portfolio of single-sector ETFs is genuinely more diversified.
+  const namedSectorCount = Object.keys(sectorValues).length;
+  const broadMarketBoost = broadMarketPct >= 15 ? 3 : broadMarketPct >= 5 ? 1 : 0;
+  const sectorCount = namedSectorCount + broadMarketBoost;
+  const topSectorEntry = Object.entries(sectorValues).sort((a, b) => b[1] - a[1])[0];
+  const topSector: [string, number] | undefined = topSectorEntry;
+  // Top-sector % is computed over the *non-broad-market* slice — broad market
+  // doesn't concentrate, so it shouldn't show up as a sector overweight.
+  const topSectorPct = topSector ? (topSector[1] / totalValue) * 100 : 0;
 
   const peHoldings = holdings.filter((h) => h.pe_ratio && h.pe_ratio > 0 && h.pe_ratio < 500);
-  const avgPE = peHoldings.length
-    ? peHoldings.reduce((s, h) => s + h.pe_ratio!, 0) / peHoldings.length
+  // Value-weighted P/E so a tiny holding's earnings multiple doesn't swing the metric.
+  const peTotalValue = peHoldings.reduce((s, h) => s + h.current_value, 0);
+  const avgPE = peTotalValue > 0
+    ? peHoldings.reduce((s, h) => s + h.pe_ratio! * h.current_value, 0) / peTotalValue
     : null;
 
-  const sells   = holdings.filter((h) => h.recommendation === "SELL" || h.recommendation === "STRONG SELL");
-  const strongSells = holdings.filter((h) => h.recommendation === "STRONG SELL");
-  const buys    = holdings.filter((h) => h.recommendation === "STRONG BUY" || h.recommendation === "BUY");
-  const strongBuys = holdings.filter((h) => h.recommendation === "STRONG BUY");
+  // Sort signals by portfolio weight, descending — biggest positions surface first.
+  const byWeightDesc = (a: Holding, b: Holding) => b.current_value - a.current_value;
+  const sells   = holdings.filter((h) => h.recommendation === "SELL" || h.recommendation === "STRONG SELL").sort(byWeightDesc);
+  const strongSells = holdings.filter((h) => h.recommendation === "STRONG SELL").sort(byWeightDesc);
+  const buys    = holdings.filter((h) => h.recommendation === "STRONG BUY" || h.recommendation === "BUY").sort(byWeightDesc);
+  const strongBuys = holdings.filter((h) => h.recommendation === "STRONG BUY").sort(byWeightDesc);
 
-  // Near 52W lows (bottom 15% of range)
+  // Weight of each signal bucket — what % of capital is exposed.
+  const sellsWeightPct       = sells.reduce((s, h) => s + h.current_value, 0) / totalValue * 100;
+  const strongSellsWeightPct = strongSells.reduce((s, h) => s + h.current_value, 0) / totalValue * 100;
+  const buysWeightPct        = buys.reduce((s, h) => s + h.current_value, 0) / totalValue * 100;
+  const strongBuysWeightPct  = strongBuys.reduce((s, h) => s + h.current_value, 0) / totalValue * 100;
+
+  // Near 52W lows (bottom 15% of range), sorted + weighted.
   const nearLows = holdings.filter((h) => {
     if (!h.week_52_low || !h.week_52_high || h.week_52_high <= h.week_52_low) return false;
     const pos = (h.price - h.week_52_low) / (h.week_52_high - h.week_52_low);
     return pos < 0.15;
-  });
+  }).sort(byWeightDesc);
+  const nearLowsWeightPct = nearLows.reduce((s, h) => s + h.current_value, 0) / totalValue * 100;
 
   // ── Score model ───────────────────────────────────────────────────────────
+  // Tier thresholds use a ±0.5 smoothing band (see smoothedTier above) so a
+  // value sitting just under a cutoff (e.g. alpha 4.89% vs the 5% threshold)
+  // still earns a meaningful share of the upper tier rather than 0.
   let score = 50;
 
-  // Alpha vs S&P (±22 pts)
-  if (avgAlpha > 15)      score += 22;
-  else if (avgAlpha > 10) score += 16;
-  else if (avgAlpha > 5)  score += 10;
-  else if (avgAlpha > 0)  score += 4;
-  else if (avgAlpha < -15) score -= 20;
-  else if (avgAlpha < -5)  score -= 12;
-  else                     score -= 4;
+  // Alpha vs S&P (+18 / -22) — asymmetric: max upside requires +20pp+ alpha,
+  // max downside hits at -15pp. Tightened from the previous symmetric ±22 so
+  // long-hold portfolios can't easily max it out and a serious shortfall stings
+  // more than equivalent outperformance.
+  score += smoothedTier(avgAlpha, [
+    [-Infinity, -22],
+    [-15, -16],
+    [-5,  -8],
+    [0,    2],
+    [5,    6],
+    [10,  10],
+    [15,  14],
+    [20,  18],
+  ]);
 
-  // Win rate (±16 pts)
-  if (winRate > 75)      score += 16;
-  else if (winRate > 65) score += 10;
-  else if (winRate > 55) score += 4;
-  else if (winRate < 40) score -= 14;
-  else if (winRate < 50) score -= 7;
+  // Win rate (±12 pts) — value-weighted. 80% in winners is good but not
+  // exceptional; max requires 85%+. Intermediate tiers reward 70 vs 80
+  // distinctly so high performers separate from merely-decent ones.
+  score += smoothedTier(winnersValuePct, [
+    [-Infinity, -12],
+    [35, -6],
+    [50, -2],
+    [60,  2],
+    [70,  6],
+    [80,  9],
+    [85, 12],
+  ]);
 
-  // Beta (±8 pts)
+  // Beta — horizon-aware (+5 cap, down from +8). For retirement portfolios with
+  // a known horizon we shift the sweet spot; for brokerage / unknown the curve
+  // matches the prior generic shape with a tighter cap.
   if (weightedBeta !== null) {
-    if (weightedBeta >= 0.65 && weightedBeta <= 1.15) score += 8;
-    else if (weightedBeta > 1.5)  score -= 5;
-    else if (weightedBeta > 2.0)  score -= 10;
-    else if (weightedBeta < 0.4)  score -= 3;
+    if (horizon === "long") {
+      // 15+ years to draw — high β fine, low β suboptimal (compounding lost).
+      score += smoothedTier(weightedBeta, [
+        [-Infinity, -5], [0.65, -2], [1.0, 5], [1.5, 5], [1.8, 2], [2.2, -3],
+      ], 0.05);
+    } else if (horizon === "mid") {
+      // 7-14 years — balanced.
+      score += smoothedTier(weightedBeta, [
+        [-Infinity, -2], [0.65, 0], [0.8, 5], [1.2, 5], [1.5, 0], [1.8, -5], [2.2, -10],
+      ], 0.05);
+    } else if (horizon === "short") {
+      // <7 years — defensive is appropriate, high β actively penalised.
+      score += smoothedTier(weightedBeta, [
+        [-Infinity, 0], [0.5, 3], [0.5, 5], [0.8, 5], [1.0, -2], [1.2, -5], [1.4, -10],
+      ], 0.05);
+    } else {
+      // Generic / brokerage — no horizon assumption.
+      if (weightedBeta >= 0.65 && weightedBeta <= 1.15) {
+        score += 5;
+      } else if (weightedBeta < 0.65) {
+        score += smoothedTier(weightedBeta, [[-Infinity, -3], [0.4, -3], [0.65, 5]], 0.05);
+      } else {
+        score += smoothedTier(weightedBeta, [[1.15, 5], [1.5, -5], [2.0, -10]], 0.05);
+      }
+    }
   }
 
-  // Concentration (top1: ±14 pts)
-  if (top1Pct < 15)       score += 8;
-  else if (top1Pct < 25)  score += 3;
-  else if (top1Pct > 50)  score -= 14;
-  else if (top1Pct > 35)  score -= 8;
+  // Concentration (top1) — conviction-aware, but no longer free in the 25-35%
+  // band. A 30% single-name position is real risk regardless of conviction;
+  // STRONG BUY only neutralises the penalty, doesn't reward it.
+  if (top1Pct < 15)       score += 6;
+  else if (top1Pct < 25)  score += 2;
+  else if (top1Pct > 50) {
+    if (top1Rec === "STRONG BUY")     score -= 6;   // huge bet, model agrees, but still single-name
+    else if (top1Rec === "BUY")       score -= 9;
+    else if (top1IsSell)              score -= 20;
+    else                               score -= 16;
+  } else if (top1Pct > 35) {
+    if (top1Rec === "STRONG BUY")     score -= 1;   // was +1; conviction sized but still flagged
+    else if (top1Rec === "BUY")       score -= 4;
+    else if (top1IsSell)              score -= 14;
+    else                               score -= 10;
+  } else {
+    // 25-35% band — used to be 0 for everyone. Now small penalty even for convictions.
+    if (top1Rec === "STRONG BUY")     score += 0;
+    else if (top1Rec === "BUY")       score -= 1;
+    else if (top1IsSell)              score -= 8;
+    else                               score -= 3;
+  }
 
-  // Sell signals (±14 pts)
-  if (sells.length === 0)     score += 8;
-  else if (sells.length === 1) score -= 4;
-  else if (sells.length === 2) score -= 10;
-  else                          score -= 14;
+  // Sell signals (max -18) — unchanged tiers; we kept this honest already.
+  if (sellsWeightPct === 0) {
+    score += 4;   // was +8 — noticing the absence of sell signals shouldn't be a giant gift
+  } else {
+    score += smoothedTier(sellsWeightPct, [
+      [0,  0],
+      [2, -1],
+      [5, -4],
+      [12, -9],
+      [25, -14],
+      [40, -18],
+    ]);
+  }
+  // STRONG SELL extra penalty — used to be free below 10%; now smoothly punishes
+  // smaller exposures too.
+  score += smoothedTier(strongSellsWeightPct, [[0, 0], [3, -1], [5, -2], [10, -4], [20, -7]]);
 
-  // Sector diversity (±8 pts)
-  if (sectorCount >= 5)      score += 8;
-  else if (sectorCount >= 3) score += 3;
-  else if (sectorCount <= 1) score -= 8;
-  else                        score -= 3;
+  // Buy signals — capped at +2 *combined*. The model produces these signals,
+  // so rewarding the portfolio for having them is partly circular; symbolic only.
+  const buyReward = Math.min(
+    2,
+    smoothedTier(strongBuysWeightPct, [[0, 0], [25, 1.5]]) +
+    smoothedTier(buysWeightPct,        [[0, 0], [40, 1.0]]),
+  );
+  score += buyReward;
 
-  // P/E sanity (±4 pts)
+  // Sector diversity — same shape, same caps. The reduced broad-market boost
+  // upstream already keeps this honest for ETF-heavy books.
+  if (sectorCount >= 5) {
+    score += smoothedTier(40 - topSectorPct, [[-Infinity, 0], [0, 3], [5, 6]]);
+  } else if (sectorCount >= 3) {
+    score += smoothedTier(50 - topSectorPct, [[-Infinity, -2], [0, 0], [5, 2]]);
+  } else if (sectorCount <= 1) {
+    score -= 8;
+  } else {
+    // sectorCount === 2
+    score += smoothedTier(topSectorPct, [[0, -2], [60, -5]]);
+  }
+
+  // P/E sanity (max -12). Used to cap at -4 — letting an 85x weighted P/E off
+  // with a slap on the wrist. New curve takes a real bite once you're at
+  // pure-growth multiples.
   if (avgPE !== null) {
-    if (avgPE < 22)      score += 4;
-    else if (avgPE > 45) score -= 4;
+    score += smoothedTier(avgPE, [
+      [-Infinity, 4],
+      [22,  2],
+      [30,  0],
+      [45, -4],
+      [60, -8],
+      [80, -12],
+    ]);
   }
 
   score = Math.max(0, Math.min(100, score));
 
   // ── Grade ─────────────────────────────────────────────────────────────────
+  // Compressed top end. Max bonuses now sum to ~32 (down from ~50), so a
+  // strong-but-not-flawless portfolio caps near A−/B+. A+ requires deliberate
+  // excellence across nearly every factor. Lower grades unchanged so a poor
+  // portfolio doesn't get a free lift.
   const gradeMap: [number, string, string, string, string][] = [
-    [90, "A+", "text-emerald-400", "STRONG OVERWEIGHT", "text-emerald-400"],
-    [83, "A",  "text-emerald-400", "STRONG OVERWEIGHT", "text-emerald-400"],
-    [76, "A−", "text-green-400",   "OVERWEIGHT",        "text-green-400"],
-    [70, "B+", "text-green-400",   "OVERWEIGHT",        "text-green-400"],
-    [64, "B",  "text-sky-400",     "OVERWEIGHT",        "text-sky-400"],
-    [58, "B−", "text-sky-400",     "MARKET WEIGHT",     "text-sky-400"],
-    [52, "C+", "text-amber-400",   "MARKET WEIGHT",     "text-amber-400"],
-    [46, "C",  "text-amber-400",   "UNDERWEIGHT",       "text-amber-400"],
-    [40, "C−", "text-orange-400",  "UNDERWEIGHT",       "text-orange-400"],
-    [34, "D+", "text-orange-400",  "UNDERWEIGHT",       "text-orange-400"],
-    [28, "D",  "text-red-400",     "STRONG UNDERWEIGHT","text-red-400"],
+    [92, "A+", "text-emerald-400", "STRONG OVERWEIGHT", "text-emerald-400"],
+    [87, "A",  "text-emerald-400", "STRONG OVERWEIGHT", "text-emerald-400"],
+    [81, "A−", "text-green-400",   "OVERWEIGHT",        "text-green-400"],
+    [73, "B+", "text-green-400",   "OVERWEIGHT",        "text-green-400"],
+    [60, "B",  "text-sky-400",     "OVERWEIGHT",        "text-sky-400"],
+    [53, "B−", "text-sky-400",     "MARKET WEIGHT",     "text-sky-400"],
+    [47, "C+", "text-amber-400",   "MARKET WEIGHT",     "text-amber-400"],
+    [41, "C",  "text-amber-400",   "UNDERWEIGHT",       "text-amber-400"],
+    [35, "C−", "text-orange-400",  "UNDERWEIGHT",       "text-orange-400"],
+    [29, "D+", "text-orange-400",  "UNDERWEIGHT",       "text-orange-400"],
+    [22, "D",  "text-red-400",     "STRONG UNDERWEIGHT","text-red-400"],
     [0,  "F",  "text-red-400",     "STRONG UNDERWEIGHT","text-red-400"],
   ];
   const [, grade, gradeColor, rating, ratingColor] =
@@ -148,21 +383,32 @@ function buildReport(holdings: Holding[], label: string): ReportData | null {
 
   // ── Narrative headline ────────────────────────────────────────────────────
   const alphaVerb = avgAlpha > 5 ? "strong" : avgAlpha > 0 ? "modest" : avgAlpha < -5 ? "significant negative" : "neutral";
-  const concVerb  = top1Pct > 40 ? "dangerously concentrated" : top3Pct > 60 ? "top-heavy" : "reasonably balanced";
+  // Concentration framing depends on the top position's signal: a 40%
+  // STRONG BUY is "high-conviction sizing", not "dangerously concentrated".
+  const concVerb  =
+    top1Pct > 40
+      ? (top1IsConvicted ? "high-conviction sized" : "dangerously concentrated")
+      : top3Pct > 60
+        ? (top3ConvictionPct >= 60 ? "concentrated in conviction names" : "top-heavy")
+        : "reasonably balanced";
   const betaAdj   = weightedBeta === null ? "" : weightedBeta > 1.4 ? "high-beta" : weightedBeta < 0.8 ? "low-beta" : "balanced-beta";
 
   const positives = [
     avgAlpha > 5  && `${alphaVerb} alpha generation (+${avgAlpha.toFixed(1)}% vs S&P)`,
-    winRate > 65  && `${winRate.toFixed(0)}% win rate`,
-    sells.length === 0 && "no active sell signals",
-    sectorCount >= 4 && `${sectorCount}-sector diversification`,
+    winnersValuePct > 70 && `${winnersValuePct.toFixed(0)}% of capital in winners`,
+    sellsWeightPct < 2 && "negligible exposure to sell-signaled names",
+    sectorCount >= 4 && topSectorPct < 50 && `${sectorCount}-sector diversification`,
+    // Convicted concentration *is* a strength, not a risk.
+    top1Pct > 30 && top1Rec === "STRONG BUY" && `high-conviction ${top1Ticker} sizing (${top1Pct.toFixed(0)}%, STRONG BUY)`,
   ].filter(Boolean).slice(0, 2).join(" and ");
 
   const negatives = [
-    sells.length >= 2  && `${sells.length} unresolved sell signals`,
-    top1Pct > 35       && `concentration risk in ${top1Ticker} (${top1Pct.toFixed(0)}%)`,
+    sellsWeightPct >= 12 && `${sellsWeightPct.toFixed(0)}% of capital in sell-signaled positions`,
+    // Only call concentration a "risk" when the model isn't already telling
+    // you to keep the position. A 40% NVDA at STRONG BUY is not a risk to flag.
+    top1Pct > 35 && !top1IsConvicted && `concentration risk in ${top1Ticker} (${top1Pct.toFixed(0)}%, ${top1Rec})`,
     avgAlpha < -3      && `portfolio lagging S&P by ${Math.abs(avgAlpha).toFixed(1)}%`,
-    sectorCount <= 2   && "limited sector diversification",
+    topSectorPct > 55  && `${topSector?.[0]} concentration at ${topSectorPct.toFixed(0)}% of book`,
     weightedBeta && weightedBeta > 1.5 && `above-market beta of ${weightedBeta.toFixed(2)}`,
   ].filter(Boolean).slice(0, 2).join("; ");
 
@@ -174,8 +420,10 @@ function buildReport(holdings: Holding[], label: string): ReportData | null {
       : `${label} requires structural attention: ${negatives || "multiple risk factors present"}`;
 
   const narrative = buildNarrative(
-    score, avgAlpha, winRate, top1Pct, top3Pct, top1Ticker,
-    sectorCount, sells.length, buys.length, weightedBeta, avgPE, holdings.length, label
+    score, avgAlpha, cumAlphaDollar, winRate, winnersValuePct, top1Pct, top3Pct, top1Ticker, top1Rec,
+    sectorCount, topSectorPct, topSector?.[0],
+    sells, sellsWeightPct, buys, buysWeightPct,
+    weightedBeta, avgPE, holdings.length, label
   );
 
   // ── Strengths ─────────────────────────────────────────────────────────────
@@ -184,32 +432,42 @@ function buildReport(holdings: Holding[], label: string): ReportData | null {
   if (avgAlpha > 3) strengths.push({
     icon: TrendingUp,
     text: `Generating ${avgAlpha > 10 ? "exceptional" : "meaningful"} alpha vs S&P 500`,
-    metric: `+${avgAlpha.toFixed(1)}% avg outperformance`,
+    metric: `${formatCurrency(cumAlphaDollar)} cumulative · +${avgAlpha.toFixed(1)}% weighted`,
   });
-  if (winRate > 60) strengths.push({
+  if (winnersValuePct > 60) strengths.push({
     icon: CheckCircle2,
-    text: `${winRate > 75 ? "High" : "Solid"} win rate — majority of positions profitable`,
-    metric: `${winRate.toFixed(0)}% of positions in the green`,
+    text: `${winnersValuePct > 80 ? "High" : "Solid"} winning weight — most capital is in profitable positions`,
+    metric: `${winnersValuePct.toFixed(0)}% of value in the green (${winRate.toFixed(0)}% of positions)`,
   });
   if (weightedBeta !== null && weightedBeta < 1.0 && weightedBeta > 0.5) strengths.push({
     icon: Shield,
     text: "Below-market beta — favorable risk-adjusted return profile",
     metric: `β = ${weightedBeta.toFixed(2)} (market is 1.0)`,
   });
-  if (sells.length === 0) strengths.push({
+  if (sellsWeightPct < 2) strengths.push({
     icon: Target,
-    text: "All positions carry neutral-to-positive signals",
-    metric: `${buys.length} Buy · ${holdings.length - buys.length - sells.length} Hold · 0 Sell`,
+    text: sellsWeightPct === 0
+      ? "All positions carry neutral-to-positive signals"
+      : "Sell-signaled exposure is negligible",
+    metric: `${buysWeightPct.toFixed(0)}% capital BUY · ${(100 - buysWeightPct - sellsWeightPct).toFixed(0)}% HOLD · ${sellsWeightPct.toFixed(1)}% SELL`,
   });
-  if (sectorCount >= 4) strengths.push({
+  if (sectorCount >= 4 && topSectorPct < 50) strengths.push({
     icon: PieChart,
-    text: `Well-diversified across ${sectorCount} distinct sectors`,
-    metric: `No single sector dominates`,
+    text: `Well-diversified across ${sectorCount} sectors`,
+    metric: `Top sector ${topSector?.[0] ?? ""} only ${topSectorPct.toFixed(0)}% of book`,
   });
-  if (strongBuys.length >= 2) strengths.push({
+  if (strongBuysWeightPct >= 20) strengths.push({
     icon: Zap,
-    text: `${strongBuys.length} STRONG BUY conviction positions`,
-    metric: strongBuys.slice(0, 3).map((h) => h.ticker).join(", "),
+    text: `${strongBuysWeightPct.toFixed(0)}% of capital in STRONG BUY-rated names`,
+    metric: strongBuys.slice(0, 3).map((h) => `${h.ticker} (${(h.current_value / totalValue * 100).toFixed(0)}%)`).join(", "),
+  });
+  // Outsized top position with STRONG BUY conviction surfaces as a strength,
+  // but plain BUY does not — we want to acknowledge real conviction sizing
+  // without rewarding every overweight as "high-conviction".
+  if (top1Pct >= 25 && top1Rec === "STRONG BUY") strengths.push({
+    icon: Target,
+    text: `High-conviction sizing in ${top1Ticker}`,
+    metric: `${top1Pct.toFixed(0)}% of book · STRONG BUY — model agrees, but single-name risk remains real`,
   });
   if (avgPE !== null && avgPE < 22) strengths.push({
     icon: BarChart2,
@@ -225,75 +483,146 @@ function buildReport(holdings: Holding[], label: string): ReportData | null {
   // ── Risks ─────────────────────────────────────────────────────────────────
   const risks: ReportData["risks"] = [];
 
-  if (top1Pct > 30) risks.push({
+  // Concentration only counts as a *risk* when the position isn't backed by
+  // model conviction. A STRONG BUY-rated 40% position is high-conviction
+  // sizing (handled in strengths above). A BUY-rated outsized position is
+  // surfaced only as a soft caution. SELL/HOLD outsized positions remain a
+  // proper risk.
+  if (top1Pct > 30 && !top1IsConvicted) risks.push({
     icon: Layers,
     text: `Concentration risk — ${top1Ticker} represents outsized portfolio weight`,
-    metric: `${top1Pct.toFixed(0)}% in single position (top 3 = ${top3Pct.toFixed(0)}%)`,
+    metric: `${top1Pct.toFixed(0)}% in single position (rated ${top1Rec}, top 3 = ${top3Pct.toFixed(0)}%)`,
   });
-  if (sells.length >= 1) risks.push({
+  else if (top1Pct > 45 && top1Rec === "BUY") risks.push({
+    icon: Layers,
+    text: `${top1Ticker} is heavily sized — even with a BUY signal, single-name risk is real`,
+    metric: `${top1Pct.toFixed(0)}% concentration · a 25% drawdown costs the book ~${(top1Pct * 0.25).toFixed(0)}%`,
+  });
+  // Only surface a sell-signal *risk* when the exposure is material (≥3% of
+  // book) — otherwise it's noise that drags the analyst grade unfairly.
+  if (sellsWeightPct >= 3) risks.push({
     icon: TrendingDown,
-    text: `${sells.length} position${sells.length > 1 ? "s" : ""} flagged with ${sells.length > 1 ? "sell signals" : "a sell signal"}`,
-    metric: sells.slice(0, 3).map((h) => `${h.ticker} (${h.recommendation})`).join(", "),
+    text: sellsWeightPct >= 12
+      ? `Material sell-signal exposure — ${sellsWeightPct.toFixed(0)}% of capital flagged`
+      : `${sellsWeightPct.toFixed(0)}% of capital sits in sell-signaled positions`,
+    metric: sells.slice(0, 3).map((h) => `${h.ticker} ${(h.current_value / totalValue * 100).toFixed(0)}% (${h.recommendation})`).join(", "),
   });
   if (avgAlpha < 0) risks.push({
     icon: AlertTriangle,
     text: "Portfolio underperforming S&P 500 on a risk-adjusted basis",
-    metric: `Avg alpha ${avgAlpha.toFixed(1)}% — capital destruction vs benchmark`,
+    metric: `${formatCurrency(cumAlphaDollar)} cumulative · ${avgAlpha.toFixed(1)}% weighted vs benchmark`,
   });
-  if (sectorCount <= 2) risks.push({
+  if (sectorCount <= 2 || topSectorPct > 60) risks.push({
     icon: PieChart,
-    text: "Limited sector diversification — idiosyncratic risk elevated",
+    text: topSectorPct > 60
+      ? `Heavy sector concentration in ${topSector?.[0] ?? "one sector"}`
+      : "Limited sector diversification — idiosyncratic risk elevated",
     metric: sectorCount <= 1
-      ? "All holdings in one sector — no buffer against sector downturns"
-      : `Only ${sectorCount} sectors — heavily exposed to ${topSector?.[0] ?? "one sector"}`,
+      ? `100% in ${topSector?.[0] ?? "one sector"} — no buffer against sector downturns`
+      : `${topSector?.[0] ?? "Top sector"} = ${topSectorPct.toFixed(0)}% of book across ${sectorCount} sectors`,
   });
   if (weightedBeta !== null && weightedBeta > 1.4) risks.push({
     icon: AlertTriangle,
-    text: "Above-market beta — portfolio amplifies market drawdowns",
-    metric: `β = ${weightedBeta.toFixed(2)} — ${((weightedBeta - 1) * 100).toFixed(0)}% more volatile than S&P`,
+    text: horizon === "long"
+      ? "High beta — appropriate for the long horizon, but watch position sizing"
+      : "Above-market beta — portfolio amplifies market drawdowns",
+    metric: `β = ${weightedBeta.toFixed(2)} — ${((weightedBeta - 1) * 100).toFixed(0)}% more volatile than S&P${horizon === "short" ? " (your <7-year horizon makes this acute)" : ""}`,
   });
-  if (nearLows.length >= 2) risks.push({
+  // Horizon mismatch (retirement portfolios with planner profile only): the
+  // portfolio's risk posture conflicts with the time-to-draw. We surface this
+  // even when β is in a "neutral" zone overall, because the combination of
+  // β and horizon is what matters.
+  if (horizon === "long" && weightedBeta !== null && weightedBeta < 0.7 && yearsToRetirement !== null) {
+    risks.push({
+      icon: AlertTriangle,
+      text: `Portfolio is too defensive for a ${yearsToRetirement}-year horizon`,
+      metric: `β = ${weightedBeta.toFixed(2)} — at this distance from retirement, more equity risk would compound meaningfully more wealth`,
+    });
+  } else if (horizon === "short" && weightedBeta !== null && weightedBeta > 1.1 && yearsToRetirement !== null) {
+    risks.push({
+      icon: AlertTriangle,
+      text: `Portfolio risk is too high with only ${yearsToRetirement} years to retirement`,
+      metric: `β = ${weightedBeta.toFixed(2)} — a 30% market correction translates to ~${(weightedBeta * 30).toFixed(0)}% drawdown with limited time to recover`,
+    });
+  }
+  // Only flag the 52W-low risk when a meaningful slice of capital is involved.
+  if (nearLowsWeightPct >= 5) risks.push({
     icon: TrendingDown,
-    text: `${nearLows.length} positions sitting near 52-week lows`,
-    metric: nearLows.slice(0, 3).map((h) => h.ticker).join(", ") + " — downtrend risk",
+    text: `${nearLowsWeightPct.toFixed(0)}% of capital sits near 52-week lows`,
+    metric: nearLows.slice(0, 3).map((h) => `${h.ticker} ${(h.current_value / totalValue * 100).toFixed(0)}%`).join(", ") + " — downtrend risk",
   });
-  if (winRate < 50) risks.push({
+  if (winnersValuePct < 50) risks.push({
     icon: TrendingDown,
-    text: "Below-50% win rate — more losing positions than winning",
-    metric: `${holdings.filter((h) => h.gain < 0).length} losers vs ${holdings.filter((h) => h.gain > 0).length} winners`,
+    text: "Most capital sits in losing positions",
+    metric: `${(100 - winnersValuePct).toFixed(0)}% of value in losers (${winnersByCount} of ${holdings.length} positions losing)`,
   });
-  if (avgPE !== null && avgPE > 40) risks.push({
+  if (avgPE !== null && avgPE > 45) risks.push({
     icon: BarChart2,
-    text: "Portfolio carrying elevated valuation risk",
-    metric: `Avg P/E ${avgPE.toFixed(1)}x — vulnerable to multiple compression`,
+    text: avgPE > 80
+      ? "Portfolio carrying extreme valuation risk — pure-growth multiples"
+      : avgPE > 60
+        ? "Portfolio carrying high valuation risk"
+        : "Portfolio carrying elevated valuation risk",
+    metric: `Weighted P/E ${avgPE.toFixed(1)}x — vulnerable to multiple compression on any earnings disappointment`,
   });
-  if (topSectorPct > 60 && sectorCount > 1) risks.push({
-    icon: PieChart,
-    text: `Sector concentration in ${topSector?.[0] ?? "one sector"}`,
-    metric: `${topSectorPct.toFixed(0)}% of holdings in single sector`,
-  });
+  // (Heavy-sector risk now handled in the combined check above — no duplicate.)
 
   // ── Priority actions ──────────────────────────────────────────────────────
   const actions: ReportData["actions"] = [];
 
-  // Address sell signals first
-  for (const h of sells.slice(0, 2)) {
+  // Address sell signals first — but only those that are actually material to
+  // the portfolio. Tiny positions with sell ratings get a single low-priority
+  // catch-all action instead of cluttering the high-priority queue.
+  const materialSells = sells.filter((h) => (h.current_value / totalValue) >= 0.02); // ≥2% of book
+  for (const h of materialSells.slice(0, 2)) {
+    const wPct = (h.current_value / totalValue) * 100;
     actions.push({
-      priority: "high",
+      priority: wPct >= 8 ? "high" : "medium",
       ticker: h.ticker,
       action: h.recommendation === "STRONG SELL" ? `Exit ${h.ticker} position` : `Reduce or exit ${h.ticker}`,
-      rationale: h.rec_reasons[0] ?? `Rated ${h.recommendation} by our model`,
+      rationale: `${wPct.toFixed(1)}% of portfolio · ${h.rec_reasons[0] ?? `rated ${h.recommendation}`}`,
+    });
+  }
+  const trivialSellCount = sells.length - materialSells.length;
+  if (trivialSellCount > 0 && materialSells.length === 0) {
+    actions.push({
+      priority: "low",
+      ticker: null,
+      action: `Review ${trivialSellCount} small sell-signaled position${trivialSellCount > 1 ? "s" : ""}`,
+      rationale: `Each is <2% of the book — no urgency, but worth deciding to either exit or upsize away from`,
     });
   }
 
-  // Address concentration
+  // Address concentration — but only when the model isn't already telling
+  // you to *hold* the position. "Trim your STRONG BUY" is bad advice; we
+  // either skip the action or downgrade it to a "consider trimming if it
+  // grows further" reminder.
   if (top1Pct > 35 && !sells.find((h) => h.ticker === top1Ticker)) {
-    actions.push({
-      priority: "high",
-      ticker: top1Ticker,
-      action: `Trim ${top1Ticker} to reduce concentration`,
-      rationale: `At ${top1Pct.toFixed(0)}% of portfolio, a 20% drawdown in ${top1Ticker} alone would drop the overall portfolio by ${(top1Pct * 0.2).toFixed(0)}%`,
-    });
+    if (top1Rec === "STRONG BUY") {
+      // Model agrees with the size — only nudge if the position is truly enormous
+      if (top1Pct > 55) {
+        actions.push({
+          priority: "low",
+          ticker: top1Ticker,
+          action: `Set a trailing stop on ${top1Ticker} rather than trim`,
+          rationale: `At ${top1Pct.toFixed(0)}% of book and rated STRONG BUY, the model's still bullish. Trailing stops protect against giving back gains without forcing you to sell into strength.`,
+        });
+      }
+    } else if (top1Rec === "BUY") {
+      actions.push({
+        priority: "medium",
+        ticker: top1Ticker,
+        action: `Consider partial trim of ${top1Ticker} if it grows further`,
+        rationale: `${top1Pct.toFixed(0)}% concentration with a BUY (not STRONG BUY) signal — keep most of it, but a 20% drawdown costs the book ~${(top1Pct * 0.2).toFixed(0)}%, so don't let it grow unchecked.`,
+      });
+    } else {
+      actions.push({
+        priority: "high",
+        ticker: top1Ticker,
+        action: `Trim ${top1Ticker} to reduce concentration`,
+        rationale: `${top1Pct.toFixed(0)}% of portfolio, rated ${top1Rec ?? "HOLD"} — a 20% drawdown alone would drop the overall portfolio by ${(top1Pct * 0.2).toFixed(0)}%, and the model isn't asking you to keep it.`,
+      });
+    }
   }
 
   // Diversification
@@ -306,13 +635,14 @@ function buildReport(holdings: Holding[], label: string): ReportData | null {
     });
   }
 
-  // Near 52W lows review
-  if (nearLows.length >= 2) {
+  // Near 52W lows review — only flag when meaningful capital is involved.
+  if (nearLowsWeightPct >= 5) {
+    const top2 = nearLows.slice(0, 2).map((h) => `${h.ticker} (${(h.current_value / totalValue * 100).toFixed(0)}%)`).join(", ");
     actions.push({
-      priority: "medium",
+      priority: nearLowsWeightPct >= 15 ? "high" : "medium",
       ticker: null,
-      action: `Review thesis on ${nearLows.map((h) => h.ticker).slice(0, 2).join(", ")} near 52W lows`,
-      rationale: "Determine whether the downtrend reflects deteriorating fundamentals or a tactical entry opportunity",
+      action: `Review thesis on ${top2} near 52W lows`,
+      rationale: `${nearLowsWeightPct.toFixed(0)}% of capital exposed — determine whether the downtrend reflects deteriorating fundamentals or a tactical entry opportunity`,
     });
   }
 
@@ -352,14 +682,19 @@ function buildReport(holdings: Holding[], label: string): ReportData | null {
   // ── Quick metrics strip ───────────────────────────────────────────────────
   const metrics: ReportData["metrics"] = [
     {
-      label: "Alpha vs S&P",
+      label: "Cumulative Alpha",
+      value: formatCurrency(cumAlphaDollar),
+      color: cumAlphaDollar > 0 ? "text-green-400" : "text-red-400",
+    },
+    {
+      label: "Weighted Alpha %",
       value: formatPct(avgAlpha),
       color: avgAlpha > 0 ? "text-green-400" : "text-red-400",
     },
     {
-      label: "Win Rate",
-      value: `${winRate.toFixed(0)}%`,
-      color: winRate > 60 ? "text-green-400" : winRate < 50 ? "text-red-400" : "text-amber-400",
+      label: "Capital in Winners",
+      value: `${winnersValuePct.toFixed(0)}%`,
+      color: winnersValuePct > 70 ? "text-green-400" : winnersValuePct < 50 ? "text-red-400" : "text-amber-400",
     },
     {
       label: "Portfolio β",
@@ -367,9 +702,9 @@ function buildReport(holdings: Holding[], label: string): ReportData | null {
       color: weightedBeta !== null && weightedBeta > 1.5 ? "text-orange-400" : "text-slate-300",
     },
     {
-      label: "Signals",
-      value: `${buys.length}B / ${holdings.length - buys.length - sells.length}H / ${sells.length}S`,
-      color: sells.length >= 2 ? "text-orange-400" : "text-slate-300",
+      label: "Signal Weight",
+      value: `${buysWeightPct.toFixed(0)}%B / ${(100 - buysWeightPct - sellsWeightPct).toFixed(0)}%H / ${sellsWeightPct.toFixed(0)}%S`,
+      color: sellsWeightPct >= 12 ? "text-orange-400" : sellsWeightPct >= 5 ? "text-amber-400" : "text-slate-300",
     },
     {
       label: "Sector Diversity",
@@ -397,35 +732,50 @@ function buildReport(holdings: Holding[], label: string): ReportData | null {
 
 function buildNarrative(
   score: number,
-  avgAlpha: number, winRate: number, top1Pct: number, top3Pct: number,
-  top1Ticker: string, sectorCount: number, sellCount: number, buyCount: number,
+  avgAlpha: number, cumAlphaDollar: number,
+  winRate: number, winnersValuePct: number,
+  top1Pct: number, top3Pct: number, top1Ticker: string, top1Rec: string | undefined,
+  sectorCount: number, topSectorPct: number, topSectorName: string | undefined,
+  sells: Holding[], sellsWeightPct: number,
+  buys: Holding[], buysWeightPct: number,
   beta: number | null, avgPE: number | null, n: number, label: string
 ): string {
   const parts: string[] = [];
+  const cumAbs = formatCurrency(Math.abs(cumAlphaDollar));
+  const sellCount = sells.length;
+  const top1IsConvicted = top1Rec === "STRONG BUY" || top1Rec === "BUY";
 
-  // Alpha sentence
+  // Alpha sentence — cumulative dollars (real money) + value-weighted % (relative)
   if (avgAlpha > 10)
-    parts.push(`This portfolio is a strong alpha generator, outperforming the S&P 500 by an average of ${avgAlpha.toFixed(1)}% per position — a rare achievement that suggests genuine stock-picking skill or favorable sector timing.`);
+    parts.push(`This portfolio is a strong alpha generator, beating an S&P-equivalent allocation by ${cumAbs} cumulatively (${avgAlpha.toFixed(1)}% value-weighted) — a rare achievement that suggests genuine stock-picking skill or favorable sector timing.`);
   else if (avgAlpha > 3)
-    parts.push(`The portfolio delivers ${avgAlpha.toFixed(1)}% average alpha over the S&P 500, a respectable outperformance that reflects sound position selection.`);
+    parts.push(`The portfolio delivers ${cumAbs} of cumulative alpha (${avgAlpha.toFixed(1)}% value-weighted) above the S&P 500 — a respectable outperformance that reflects sound position selection.`);
   else if (avgAlpha > 0)
-    parts.push(`The portfolio is marginally ahead of its S&P 500 benchmark (+${avgAlpha.toFixed(1)}% avg alpha), though the margin of outperformance is narrow and warrants continued monitoring.`);
+    parts.push(`The portfolio is marginally ahead of its S&P 500 benchmark (+${cumAbs} cumulative, +${avgAlpha.toFixed(1)}% value-weighted), though the margin of outperformance is narrow and warrants continued monitoring.`);
   else
-    parts.push(`The portfolio is currently underperforming its S&P 500 benchmark by ${Math.abs(avgAlpha).toFixed(1)}% on average — a meaningful drag that compounds over time if left unaddressed.`);
+    parts.push(`The portfolio is currently behind its S&P 500 benchmark by ${cumAbs} cumulatively (${Math.abs(avgAlpha).toFixed(1)}% value-weighted) — a meaningful drag that compounds over time if left unaddressed.`);
 
-  // Win rate + concentration sentence
-  if (winRate > 70 && top1Pct <= 30)
-    parts.push(`A ${winRate.toFixed(0)}% win rate across ${n} positions, combined with a balanced allocation structure, creates a durable return profile.`);
-  else if (winRate > 60 && top1Pct > 35)
-    parts.push(`A strong ${winRate.toFixed(0)}% win rate is partially offset by concentration risk — ${top1Ticker} alone represents ${top1Pct.toFixed(0)}% of the portfolio, meaning a single adverse move carries portfolio-level consequences.`);
-  else if (winRate < 50)
-    parts.push(`The below-50% win rate (${winRate.toFixed(0)}%) suggests the selection process needs recalibration — an active trader's edge should consistently exceed 55%.`);
+  // Win rate + concentration sentence — uses *capital-weighted* winners %
+  // and frames concentration as either "high-conviction sizing" (when the
+  // top position has a BUY/STRONG BUY signal) or "concentration risk".
+  if (winnersValuePct > 75 && top1Pct <= 30)
+    parts.push(`${winnersValuePct.toFixed(0)}% of capital sits in profitable positions across ${n} holdings, combined with a balanced allocation structure — a durable return profile.`);
+  else if (winnersValuePct > 65 && top1Pct > 35) {
+    if (top1IsConvicted)
+      parts.push(`${winnersValuePct.toFixed(0)}% of capital is in winners, anchored by a high-conviction ${top1Pct.toFixed(0)}% position in ${top1Ticker} (rated ${top1Rec}). The model agrees with the size, but single-name risk still warrants a stop-loss discipline rather than a trim.`);
+    else
+      parts.push(`${winnersValuePct.toFixed(0)}% of capital is in winners, but concentration risk runs alongside it — ${top1Ticker} alone represents ${top1Pct.toFixed(0)}% of the portfolio (rated ${top1Rec ?? "HOLD"}), so a single adverse move carries portfolio-level consequences.`);
+  }
+  else if (winnersValuePct < 50)
+    parts.push(`Only ${winnersValuePct.toFixed(0)}% of capital sits in profitable positions — the bulk of the book is in the red and the selection process needs recalibration.`);
 
-  // Sell signals
-  if (sellCount >= 3)
-    parts.push(`Most urgently, ${sellCount} positions are flashing sell signals — at this level, selective exits are essential before further capital erosion.`);
-  else if (sellCount >= 1)
-    parts.push(`${sellCount === 1 ? "One position carries" : `${sellCount} positions carry`} an active sell signal and should be reviewed for exit or significant reduction.`);
+  // Sell signals — frame by capital, not count, and skip trivial exposure.
+  if (sellsWeightPct >= 15)
+    parts.push(`Most urgently, ${sellsWeightPct.toFixed(0)}% of capital is in sell-signaled positions${sells[0] ? ` (largest: ${sells[0].ticker} at ${(sells[0].current_value / sells.reduce((s, h) => s + h.current_value, 0) * sellsWeightPct).toFixed(0)}% of book)` : ""} — at this exposure, selective exits are essential before further capital erosion.`);
+  else if (sellsWeightPct >= 5)
+    parts.push(`${sellsWeightPct.toFixed(0)}% of capital sits in sell-signaled positions and should be reviewed for exit or significant reduction.`);
+  else if (sellCount >= 1 && sellsWeightPct < 2)
+    parts.push(`A handful of small positions carry sell signals, but together they're under 2% of the book — more of a housekeeping item than a structural concern.`);
 
   // Risk posture
   if (beta !== null) {
@@ -460,9 +810,9 @@ const PRIORITY_STYLES = {
   low:    { bg: "bg-sky-500/10 border-sky-500/20",     label: "bg-sky-500/20 text-sky-400",     dot: "bg-sky-400"   },
 };
 
-export function AnalystReport({ holdings, label }: Props) {
+export function AnalystReport({ holdings, label, summary }: Props) {
   const [expanded, setExpanded] = useState(false);
-  const report = useMemo(() => buildReport(holdings, label), [holdings, label]);
+  const report = useMemo(() => buildReport(holdings, label, summary), [holdings, label, summary]);
 
   if (!report) return null;
 

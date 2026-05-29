@@ -5,7 +5,7 @@ import { Link } from "react-router-dom";
 import {
   DollarSign, TrendingUp, Activity, TrendingDown, ChevronRight,
   BarChart2, Shield, PieChart as PieIcon, Award, Zap, Compass,
-  RefreshCw, LayoutGrid,
+  RefreshCw, LayoutGrid, Newspaper,
 } from "lucide-react";
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
@@ -17,6 +17,8 @@ import { RecBadge } from "@/components/RecBadge";
 import { StockDiscovery } from "@/components/StockDiscovery";
 import { AnalystReport } from "@/components/AnalystReport";
 import { SkeletonCard } from "@/components/Skeleton";
+import { PortfolioNews } from "@/components/PortfolioNews";
+import { SignalsModal } from "@/components/SignalsModal";
 import { formatCurrency, formatPct, gainColor, pieColors, formatMarketCap } from "@/lib/utils";
 import type { Holding } from "@/types";
 
@@ -46,10 +48,11 @@ const AllocationTooltip = ({ active, payload }: any) => {
   );
 };
 
-type DashTab = "overview" | "analytics" | "discover";
+type DashTab = "overview" | "analytics" | "discover" | "news";
 
 export function Overview() {
   const [activeTab, setActiveTab] = useState<DashTab>("overview");
+  const [signalsModal, setSignalsModal] = useState<"buy" | "sell" | null>(null);
 
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ["all-portfolios"],
@@ -193,6 +196,24 @@ export function Overview() {
           className="flex flex-wrap gap-3"
         >
           {[
+            {
+              label: "Cumulative α",
+              value: summary?.cumulative_alpha_dollar != null
+                ? formatCurrency(summary.cumulative_alpha_dollar)
+                : "—",
+              color: gainColor(summary?.cumulative_alpha_dollar ?? 0),
+              bg: (summary?.cumulative_alpha_dollar ?? 0) >= 0
+                ? "bg-gain/10 border-gain/20"
+                : "bg-loss/10 border-loss/20",
+            },
+            {
+              label: "Weighted α",
+              value: summary?.weighted_alpha_pct != null
+                ? `${summary.weighted_alpha_pct >= 0 ? "+" : ""}${summary.weighted_alpha_pct.toFixed(1)}%`
+                : "—",
+              color: gainColor(summary?.weighted_alpha_pct ?? 0),
+              bg: "bg-white/[0.04] border-white/[0.07]",
+            },
             { label: "Beat S&P 500", value: `${outperfSP}/${allHoldings.length}`, color: "text-accent-blue", bg: "bg-accent-blue/10 border-accent-blue/20" },
             {
               label: "Cost Basis",
@@ -221,17 +242,29 @@ export function Overview() {
               value: `${(recCounts["STRONG BUY"] || 0) + (recCounts["BUY"] || 0)}`,
               color: "text-gain",
               bg: "bg-gain/10 border-gain/20",
+              click: "buy" as const,
             },
             {
               label: "Sell Signals",
               value: `${(recCounts["SELL"] || 0) + (recCounts["STRONG SELL"] || 0)}`,
               color: "text-loss",
               bg: "bg-loss/10 border-loss/20",
+              click: "sell" as const,
             },
-          ].map(({ label, value, color, bg }) => (
+          ].map(({ label, value, color, bg, click }) => (
             <div key={label} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs ${bg}`}>
               <span className="text-slate-500">{label}:</span>
-              <span className={`font-bold font-mono ${color}`}>{value}</span>
+              {click ? (
+                <button
+                  onClick={() => setSignalsModal(click)}
+                  className={`font-bold font-mono underline underline-offset-2 hover:text-white transition-colors ${color}`}
+                  title={`Show ${label.toLowerCase()} list`}
+                >
+                  {value}
+                </button>
+              ) : (
+                <span className={`font-bold font-mono ${color}`}>{value}</span>
+              )}
             </div>
           ))}
         </motion.div>
@@ -294,6 +327,7 @@ export function Overview() {
             { id: "overview"  as DashTab, label: "Overview",       icon: LayoutGrid },
             { id: "analytics" as DashTab, label: "Analytics",      icon: BarChart2 },
             { id: "discover"  as DashTab, label: "Stock Discovery", icon: Compass },
+            { id: "news"      as DashTab, label: "Portfolio News",  icon: Newspaper },
           ].map(({ id, label, icon: Icon }) => (
             <button
               key={id}
@@ -313,7 +347,14 @@ export function Overview() {
 
       {/* === OVERVIEW TAB — Total Portfolio Analyst Report === */}
       {activeTab === "overview" && !isLoading && allHoldings.length > 0 && (
-        <AnalystReport holdings={allHoldings} label="Total Portfolio" />
+        <AnalystReport
+          holdings={allHoldings}
+          label="Total Portfolio"
+          summary={summary ? {
+            cumulative_alpha_dollar: summary.cumulative_alpha_dollar,
+            weighted_alpha_pct: summary.weighted_alpha_pct,
+          } : null}
+        />
       )}
 
       {/* === ANALYTICS TAB === */}
@@ -426,7 +467,12 @@ export function Overview() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5">
-                          <span className="font-mono font-bold text-sm text-white">{h.ticker}</span>
+                          <Link
+                            to={`/equity/${h.ticker}`}
+                            className="font-mono font-bold text-sm text-white hover:text-accent-blue hover:underline underline-offset-2"
+                          >
+                            {h.ticker}
+                          </Link>
                           <span className="text-[10px] text-slate-600 bg-slate-800/60 rounded px-1.5 py-0.5">{h.portfolio_label}</span>
                         </div>
                         <p className="text-[11px] text-slate-500 truncate">{h.name}</p>
@@ -447,6 +493,22 @@ export function Overview() {
 
       {/* === DISCOVER TAB === */}
       {activeTab === "discover" && !isLoading && <StockDiscovery />}
+
+      {/* === PORTFOLIO NEWS TAB === */}
+      {activeTab === "news" && !isLoading && <PortfolioNews />}
+
+      {signalsModal && (
+        <SignalsModal
+          kind={signalsModal}
+          holdings={
+            signalsModal === "buy"
+              ? allHoldings.filter((h) => h.recommendation === "STRONG BUY" || h.recommendation === "BUY")
+              : allHoldings.filter((h) => h.recommendation === "SELL"  || h.recommendation === "STRONG SELL")
+          }
+          totalValue={allHoldings.reduce((s, h) => s + h.current_value, 0)}
+          onClose={() => setSignalsModal(null)}
+        />
+      )}
     </div>
   );
 }

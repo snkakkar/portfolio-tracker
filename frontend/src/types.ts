@@ -47,6 +47,9 @@ export interface Holding {
   beta: number | null;
   market_cap: number | null;
   sector: string | null;
+  ma_10: number | null;
+  ma_50: number | null;
+  ma_200: number | null;
   recommendation: Recommendation;
   rec_score: number;
   rec_color: RecColor;
@@ -64,6 +67,9 @@ export interface PortfolioSummary {
   total_gain: number;
   gain_pct: number;
   todays_gain: number;
+  cumulative_alpha_dollar: number;
+  cumulative_alpha_pct: number;
+  weighted_alpha_pct: number;
 }
 
 export interface PortfolioData {
@@ -187,6 +193,7 @@ export interface PlannerInput {
   external_ira: number;
   external_cash: number;
   external_real_estate: number;
+  external_espp_rsu: number;
   external_other: number;
 }
 
@@ -218,6 +225,7 @@ export interface ExternalBreakdown {
   ira: number;
   cash: number;
   real_estate: number;
+  espp_rsu: number;
   other: number;
   total_external: number;
   grand_total: number;
@@ -274,6 +282,63 @@ export interface ExitedPosition {
   realized_gain: number;
   realized_gain_pct: number;
   hold_days: number | null;
+}
+
+// ─── News & Equity Detail ─────────────────────────────────────────────────────
+
+export interface NewsItem {
+  title: string;
+  publisher: string;
+  link: string;
+  published: string | null;
+  summary: string | null;
+  thumbnail: string | null;
+  ticker: string;
+}
+
+export interface RichQuote {
+  ticker: string;
+  name: string;
+  price: number;
+  prev_close: number;
+  change: number;
+  change_pct: number;
+  week_52_high: number | null;
+  week_52_low: number | null;
+  market_cap: number | null;
+  pe_ratio: number | null;
+  beta: number | null;
+  volume: number | null;
+  sector: string | null;
+  industry: string | null;
+  ma_10: number | null;
+  ma_50: number | null;
+  ma_200: number | null;
+  forward_pe: number | null;
+  peg_ratio: number | null;
+  eps: number | null;
+  forward_eps: number | null;
+  dividend_yield: number | null;
+  profit_margin: number | null;
+  roe: number | null;
+  debt_equity: number | null;
+  revenue_growth: number | null;
+  earnings_growth: number | null;
+  target_mean: number | null;
+  recommendation_key: string | null;
+  avg_volume: number | null;
+  long_business_summary: string | null;
+}
+
+export type FitVerdict = "STRONG FIT" | "FIT" | "NEUTRAL" | "POOR FIT" | "AVOID";
+
+export interface FitAssessment {
+  verdict: FitVerdict;
+  score: number; // -100..+100
+  already_owned: { portfolio_label: string; shares: number; gain_pct: number; current_value: number }[];
+  reasons: string[];
+  concerns: string[];
+  summary: string;
 }
 
 export const PORTFOLIOS = [

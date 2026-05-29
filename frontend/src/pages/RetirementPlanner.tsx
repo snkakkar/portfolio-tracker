@@ -43,6 +43,7 @@ const DEFAULT_INPUT: PlannerInput = {
   external_ira: 0,
   external_cash: 0,
   external_real_estate: 0,
+  external_espp_rsu: 0,
   external_other: 0,
 };
 
@@ -64,11 +65,15 @@ function InputSection({
   input,
   onChange,
   onSubmit,
+  onSaveAssets,
+  assetsSavedAt,
   loading,
 }: {
   input: PlannerInput;
   onChange: (k: keyof PlannerInput, v: number | string | null) => void;
   onSubmit: () => void;
+  onSaveAssets: () => void;
+  assetsSavedAt: number | null;
   loading: boolean;
 }) {
   const years = Math.max(0, input.retirement_age - input.current_age);
@@ -275,6 +280,7 @@ function InputSection({
           { key: "external_ira",          label: "IRA (Traditional / Roth)",   placeholder: "0" },
           { key: "external_cash",         label: "Cash & Savings",             placeholder: "0" },
           { key: "external_real_estate",  label: "Real Estate Equity",         placeholder: "0" },
+          { key: "external_espp_rsu",     label: "ESPP / RSU",                 placeholder: "0" },
           { key: "external_other",        label: "Other (crypto, brokerage…)", placeholder: "0" },
         ] as { key: keyof PlannerInput; label: string; placeholder: string }[]).map(({ key, label, placeholder }) => (
           <label key={key} className="flex items-center gap-3">
@@ -295,7 +301,8 @@ function InputSection({
         {/* Running total */}
         {(() => {
           const ext = (input.external_401k || 0) + (input.external_ira || 0) +
-            (input.external_cash || 0) + (input.external_real_estate || 0) + (input.external_other || 0);
+            (input.external_cash || 0) + (input.external_real_estate || 0) +
+            (input.external_espp_rsu || 0) + (input.external_other || 0);
           return ext > 0 ? (
             <div className="flex justify-between items-center px-3 py-2 rounded-xl bg-accent-blue/[0.06] border border-accent-blue/20 text-[11px]">
               <span className="text-slate-400">Additional assets total</span>
@@ -303,6 +310,19 @@ function InputSection({
             </div>
           ) : null;
         })()}
+        <div className="flex items-center justify-between gap-3">
+          <button
+            onClick={onSaveAssets}
+            className="px-3 py-1.5 rounded-lg border border-accent-blue/40 bg-accent-blue/10 text-[11px] font-semibold text-accent-blue hover:bg-accent-blue/15 transition-colors"
+          >
+            Save Additional Assets
+          </button>
+          {assetsSavedAt && (
+            <span className="text-[10px] text-emerald-400">
+              Saved at {new Date(assetsSavedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+            </span>
+          )}
+        </div>
       </div>
 
       <button
@@ -371,6 +391,7 @@ const BREAKDOWN_ITEMS: { key: keyof ExternalBreakdown; label: string; color: str
   { key: "ira",               label: "IRA",                  color: "#8b5cf6" },
   { key: "cash",              label: "Cash & Savings",       color: "#f59e0b" },
   { key: "real_estate",       label: "Real Estate",          color: "#f97316" },
+  { key: "espp_rsu",          label: "ESPP / RSU",           color: "#ec4899" },
   { key: "other",             label: "Other",                color: "#06b6d4" },
 ];
 
@@ -940,6 +961,7 @@ export function RetirementPlanner() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasRun, setHasRun] = useState(false);
+  const [assetsSavedAt, setAssetsSavedAt] = useState<number | null>(null);
 
   function handleChange(k: keyof PlannerInput, v: number | string | null) {
     setInput(prev => {
@@ -947,6 +969,15 @@ export function RetirementPlanner() {
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch { /* quota */ }
       return next;
     });
+  }
+
+  function handleSaveAssets() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(input));
+      setAssetsSavedAt(Date.now());
+    } catch {
+      setError("Unable to save additional assets locally.");
+    }
   }
 
   async function handleRun() {
@@ -994,6 +1025,8 @@ export function RetirementPlanner() {
           input={input}
           onChange={handleChange}
           onSubmit={handleRun}
+          onSaveAssets={handleSaveAssets}
+          assetsSavedAt={assetsSavedAt}
           loading={loading}
         />
 

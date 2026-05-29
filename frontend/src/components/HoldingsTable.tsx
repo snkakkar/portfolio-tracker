@@ -7,6 +7,7 @@ import { RecBadge } from "./RecBadge";
 import { PriceChart } from "./PriceChart";
 import { ScoreBreakdown } from "./ScoreBreakdown";
 import { ExitPositionModal } from "./ExitPositionModal";
+import { TickerLink } from "./TickerLink";
 import type { Holding } from "@/types";
 import { api } from "@/api/client";
 
@@ -119,6 +120,7 @@ export function HoldingsTable({ holdings, portfolio, onRefresh, excluded = new S
             <Th col="purchase_date" label="Date" />
             <Th col="cost_per_share" label="Avg Cost" right />
             <Th col="price" label="Price" right />
+            <Th col="ma_200" label="vs 200D" right />
             <Th col="change_pct" label="Today" right />
             <Th col="current_value" label="Value" right />
             <Th col="gain" label="Gain $" right />
@@ -159,8 +161,8 @@ export function HoldingsTable({ holdings, portfolio, onRefresh, excluded = new S
                     )}
                   >
                     {/* Ticker */}
-                    <td className="px-3 py-3 font-mono font-bold text-white text-xs whitespace-nowrap">
-                      {h.ticker}
+                    <td className="px-3 py-3 font-mono text-xs whitespace-nowrap">
+                      <TickerLink ticker={h.ticker} className="text-xs" />
                     </td>
 
                     {/* Name */}
@@ -222,6 +224,18 @@ export function HoldingsTable({ holdings, portfolio, onRefresh, excluded = new S
                     {/* Price */}
                     <td className="px-3 py-3 text-right text-white font-mono text-xs font-medium">
                       {h.price > 0 ? formatCurrency(h.price) : "—"}
+                    </td>
+
+                    {/* vs 200D MA */}
+                    <td className="px-3 py-3 text-right">
+                      {h.price > 0 && h.ma_200 ? (() => {
+                        const pct = ((h.price - h.ma_200) / h.ma_200) * 100;
+                        return (
+                          <span className={cn("inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 font-mono text-[11px] font-semibold", gainBg(pct))}>
+                            {pct >= 0 ? "▲" : "▼"} {formatPct(pct)}
+                          </span>
+                        );
+                      })() : <span className="text-slate-700">—</span>}
                     </td>
 
                     {/* Today % */}
@@ -348,7 +362,7 @@ export function HoldingsTable({ holdings, portfolio, onRefresh, excluded = new S
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
                       >
-                        <td colSpan={15} className="bg-[#090f1e] border-b border-white/[0.05] px-6 py-5">
+                        <td colSpan={16} className="bg-[#090f1e] border-b border-white/[0.05] px-6 py-5">
                           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                             {/* Left: price chart */}
                             <div>
@@ -399,6 +413,33 @@ export function HoldingsTable({ holdings, portfolio, onRefresh, excluded = new S
                                       <dd className={cn("text-xs font-bold font-mono", color)}>{v}</dd>
                                     </div>
                                   ))}
+                                </dl>
+                              </div>
+
+                              {/* Moving averages */}
+                              <div>
+                                <p className="text-[10px] font-semibold text-slate-500 mb-2 uppercase tracking-widest">Moving Averages</p>
+                                <dl className="grid grid-cols-3 gap-2">
+                                  {([
+                                    { k: "10D MA",  ma: h.ma_10  },
+                                    { k: "50D MA",  ma: h.ma_50  },
+                                    { k: "200D MA", ma: h.ma_200 },
+                                  ] as const).map(({ k, ma }) => {
+                                    const diffPct = ma && h.price > 0 ? ((h.price - ma) / ma) * 100 : null;
+                                    return (
+                                      <div key={k} className="bg-[#0e1726] rounded-lg p-2">
+                                        <dt className="text-[9px] text-slate-600 uppercase tracking-wider mb-0.5">{k}</dt>
+                                        <dd className="text-xs font-bold font-mono text-slate-200">
+                                          {ma ? formatCurrency(ma) : "—"}
+                                        </dd>
+                                        {diffPct !== null && (
+                                          <p className={cn("text-[9px] font-mono mt-0.5", gainColor(diffPct))}>
+                                            {diffPct >= 0 ? "▲" : "▼"} {formatPct(diffPct)}
+                                          </p>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
                                 </dl>
                               </div>
 

@@ -1,6 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
-import type { Recommendation, RecColor } from "@/types";
+import type { Recommendation, RecColor, Holding } from "@/types";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -66,4 +66,40 @@ export function formatMarketCap(cap: number | null): string {
   if (cap >= 1e9) return `$${(cap / 1e9).toFixed(2)}B`;
   if (cap >= 1e6) return `$${(cap / 1e6).toFixed(2)}M`;
   return `$${cap.toLocaleString()}`;
+}
+
+// ─── Alpha aggregation ────────────────────────────────────────────────────────
+// Average-of-percents across positions is a meaningless portfolio metric: a $100
+// holding pulls just as hard as a $100k one. Use cumulative dollars (real money)
+// + value-weighted % (relative comparison) instead.
+
+export interface AlphaAgg {
+  cumulative_alpha_dollar: number;
+  cumulative_alpha_pct: number;
+  weighted_alpha_pct: number;
+}
+
+export function computeAlpha(holdings: Holding[]): AlphaAgg {
+  if (!holdings.length) {
+    return { cumulative_alpha_dollar: 0, cumulative_alpha_pct: 0, weighted_alpha_pct: 0 };
+  }
+  let totalCost = 0;
+  let totalValue = 0;
+  let totalGain = 0;
+  let spDollar = 0;
+  let weightedNumer = 0;
+  for (const h of holdings) {
+    totalCost += h.total_cost;
+    totalValue += h.current_value;
+    totalGain += h.gain;
+    spDollar += h.sp_gain_dollar;
+    weightedNumer += h.alpha * h.current_value;
+  }
+  const cumulativeDollar = totalGain - spDollar;
+  return {
+    cumulative_alpha_dollar: cumulativeDollar,
+    cumulative_alpha_pct: totalCost ? (cumulativeDollar / totalCost) * 100 : 0,
+    // h.alpha is a decimal ratio (gain_pct - sp_gain_pct) / 100, so this gives a percentage.
+    weighted_alpha_pct: totalValue ? (weightedNumer / totalValue) * 100 : 0,
+  };
 }

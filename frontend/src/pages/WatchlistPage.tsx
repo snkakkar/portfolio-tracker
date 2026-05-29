@@ -9,6 +9,7 @@ import { api } from "@/api/client";
 import { RecBadge } from "@/components/RecBadge";
 import { PriceChart } from "@/components/PriceChart";
 import { SkeletonTable } from "@/components/Skeleton";
+import { TickerLink } from "@/components/TickerLink";
 import {
   formatCurrency, formatPct, gainColor, gainBg, formatMarketCap, cn,
 } from "@/lib/utils";
@@ -339,7 +340,9 @@ export function WatchlistPage() {
                             isExpanded && "bg-accent-teal/5"
                           )}
                         >
-                          <td className="px-3 py-3 font-mono font-bold text-white text-xs">{item.ticker}</td>
+                          <td className="px-3 py-3 font-mono text-xs">
+                            <TickerLink ticker={item.ticker} className="text-xs" />
+                          </td>
                           <td className="px-3 py-3 text-slate-300 max-w-[160px] truncate text-xs">{item.name}</td>
                           <td className="px-3 py-3 text-right text-white font-mono text-xs font-medium">
                             {item.price > 0 ? formatCurrency(item.price) : "—"}

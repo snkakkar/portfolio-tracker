@@ -17,12 +17,15 @@ import { RecommendationsPanel } from "@/components/RecommendationsPanel";
 import { AnalystReport } from "@/components/AnalystReport";
 import { ClosedPositionsTable } from "@/components/ClosedPositionsTable";
 import { AddPositionModal } from "@/components/AddPositionModal";
+import { SignalsModal } from "@/components/SignalsModal";
 import { SkeletonCard, SkeletonTable } from "@/components/Skeleton";
-import { formatCurrency, formatPct, gainColor } from "@/lib/utils";
+import { TickerLink } from "@/components/TickerLink";
+import { formatCurrency, formatPct, gainColor, computeAlpha } from "@/lib/utils";
 import type { PortfolioKey } from "@/types";
 
 interface Props {
-  portfolio: PortfolioKey;
+  // Built-in keys are typed; custom user-created portfolios pass through as strings.
+  portfolio: PortfolioKey | string;
 }
 
 type Tab = "overview" | "analytics" | "recommendations" | "closed";
@@ -40,6 +43,8 @@ export function PortfolioPage({ portfolio }: Props) {
   const [chartView, setChartView] = useState<"gain" | "alpha">("gain");
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
+  const [signalFilter, setSignalFilter] = useState<"all" | "buy" | "sell">("all");
+  const [signalsModal, setSignalsModal] = useState<"buy" | "sell" | null>(null);
 
   function toggleExclude(ticker: string) {
     setExcluded((prev) => {
@@ -98,9 +103,23 @@ export function PortfolioPage({ portfolio }: Props) {
   // Quick stats for the strip (always from active holdings)
   const todayUp   = activeHoldings.filter((h) => h.change > 0).length;
   const todayDown = activeHoldings.filter((h) => h.change < 0).length;
-  const avgAlpha  = activeHoldings.length ? activeHoldings.reduce((s, h) => s + h.alpha * 100, 0) / activeHoldings.length : 0;
+
+  // Cumulative dollar alpha + value-weighted alpha %. Recompute locally when
+  // exclusions are applied so the strip stays in sync with the active subset;
+  // otherwise prefer the server summary (matches what other consumers see).
+  const localAlpha = computeAlpha(activeHoldings);
+  const alphaSummary = hasExclusions
+    ? localAlpha
+    : (summary
+        ? { cumulative_alpha_dollar: summary.cumulative_alpha_dollar, weighted_alpha_pct: summary.weighted_alpha_pct }
+        : localAlpha);
   const buys      = activeHoldings.filter((h) => h.recommendation === "STRONG BUY" || h.recommendation === "BUY").length;
   const sells     = activeHoldings.filter((h) => h.recommendation === "SELL" || h.recommendation === "STRONG SELL").length;
+  const signalFilteredHoldings = holdings.filter((h) => {
+    if (signalFilter === "buy") return h.recommendation === "STRONG BUY" || h.recommendation === "BUY";
+    if (signalFilter === "sell") return h.recommendation === "SELL" || h.recommendation === "STRONG SELL";
+    return true;
+  });
 
   return (
     <div className="p-6 max-w-[1600px] mx-auto space-y-5">
@@ -234,7 +253,11 @@ export function PortfolioPage({ portfolio }: Props) {
         <div className="space-y-5">
 
           {/* Analyst Report lives at the top of the Overview tab */}
-          <AnalystReport holdings={activeHoldings} label={data?.label ?? "Portfolio"} />
+          <AnalystReport
+            holdings={activeHoldings}
+            label={data?.label ?? "Portfolio"}
+            summary={alphaSummary}
+          />
 
           {/* Quick stats strip */}
           <motion.div
@@ -244,15 +267,31 @@ export function PortfolioPage({ portfolio }: Props) {
             className="flex flex-wrap gap-2"
           >
             {[
-              { label: "Today",     value: `${todayUp}↑ ${todayDown}↓`,        color: todayUp > todayDown ? "text-gain" : "text-loss",     bg: "bg-white/[0.04] border-white/[0.07]" },
-              { label: "Avg Alpha", value: `${avgAlpha >= 0 ? "+" : ""}${avgAlpha.toFixed(1)}%`, color: gainColor(avgAlpha), bg: "bg-white/[0.04] border-white/[0.07]" },
-              { label: "Buy signals",  value: `${buys}`,  color: "text-gain",  bg: "bg-gain/10 border-gain/20" },
-              { label: "Sell signals", value: `${sells}`, color: "text-loss",  bg: sells > 0 ? "bg-loss/10 border-loss/20" : "bg-white/[0.04] border-white/[0.07]" },
-              { label: "Positions",    value: hasExclusions ? `${activeHoldings.length}/${holdings.length}` : `${holdings.length}`, color: "text-slate-300", bg: "bg-white/[0.04] border-white/[0.07]" },
-            ].map(({ label, value, color, bg }) => (
+              { label: "Today",      value: `${todayUp}↑ ${todayDown}↓`,        color: todayUp > todayDown ? "text-gain" : "text-loss",     bg: "bg-white/[0.04] border-white/[0.07]", filter: null },
+              { label: "Cum α $",    value: formatCurrency(alphaSummary.cumulative_alpha_dollar), color: gainColor(alphaSummary.cumulative_alpha_dollar), bg: "bg-white/[0.04] border-white/[0.07]", filter: null },
+              { label: "Weighted α", value: `${alphaSummary.weighted_alpha_pct >= 0 ? "+" : ""}${alphaSummary.weighted_alpha_pct.toFixed(1)}%`, color: gainColor(alphaSummary.weighted_alpha_pct), bg: "bg-white/[0.04] border-white/[0.07]", filter: null },
+              { label: "Buy signals",  value: `${buys}`,  color: "text-gain",  bg: "bg-gain/10 border-gain/20", filter: "buy" as const },
+              { label: "Sell signals", value: `${sells}`, color: "text-loss",  bg: sells > 0 ? "bg-loss/10 border-loss/20" : "bg-white/[0.04] border-white/[0.07]", filter: "sell" as const },
+              { label: "Positions",    value: hasExclusions ? `${activeHoldings.length}/${holdings.length}` : `${holdings.length}`, color: "text-slate-300", bg: "bg-white/[0.04] border-white/[0.07]", filter: null },
+            ].map(({ label, value, color, bg, filter }) => (
               <div key={label} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs ${bg}`}>
                 <span className="text-slate-500">{label}:</span>
-                <span className={`font-bold font-mono ${color}`}>{value}</span>
+                {filter ? (
+                  <button
+                    onClick={() => {
+                      setSignalsModal(filter);
+                      setSignalFilter(filter);
+                    }}
+                    className={`font-bold font-mono transition-colors underline underline-offset-2 hover:text-white ${
+                      signalFilter === filter ? "text-white" : color
+                    }`}
+                    title={`Show ${label.toLowerCase()} list`}
+                  >
+                    {value}
+                  </button>
+                ) : (
+                  <span className={`font-bold font-mono ${color}`}>{value}</span>
+                )}
               </div>
             ))}
           </motion.div>
@@ -341,7 +380,7 @@ export function PortfolioPage({ portfolio }: Props) {
                           <span className="text-[10px] text-slate-700 font-bold w-4 shrink-0">{i + 1}</span>
                           <div className="min-w-0">
                             <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="font-mono font-extrabold text-sm text-white">{h.ticker}</span>
+                              <TickerLink ticker={h.ticker} className="text-sm font-extrabold" />
                               <RecBadge rec={h.recommendation} small />
                             </div>
                             <p className="text-[10px] text-slate-500 truncate max-w-[120px]">{h.name}</p>
@@ -399,12 +438,24 @@ export function PortfolioPage({ portfolio }: Props) {
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
                 <Layers className="w-3.5 h-3.5 text-slate-500" />
-                <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">All Positions</p>
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">
+                  {signalFilter === "all" ? "All Positions" : signalFilter === "buy" ? "Buy Signals" : "Sell Signals"}
+                </p>
               </div>
-              <p className="text-[10px] text-slate-600">Click row to expand · Click headers to sort · Eye icon to exclude</p>
+              <div className="flex items-center gap-3">
+                {signalFilter !== "all" && (
+                  <button
+                    onClick={() => setSignalFilter("all")}
+                    className="text-[10px] text-accent-blue hover:text-blue-300 transition-colors"
+                  >
+                    Clear filter
+                  </button>
+                )}
+                <p className="text-[10px] text-slate-600">Click row to expand · Click headers to sort · Eye icon to exclude</p>
+              </div>
             </div>
             <HoldingsTable
-              holdings={holdings}
+              holdings={signalFilteredHoldings}
               portfolio={portfolio}
               onRefresh={() => qc.invalidateQueries({ queryKey: ["portfolio", portfolio] })}
               excluded={excluded}
@@ -416,7 +467,7 @@ export function PortfolioPage({ portfolio }: Props) {
 
       {/* === ANALYTICS TAB === */}
       {activeTab === "analytics" && !isLoading && (
-        <MetricsPanel holdings={activeHoldings} delay={0.05} />
+        <MetricsPanel holdings={activeHoldings} delay={0.05} summary={alphaSummary} />
       )}
 
       {/* === RECOMMENDATIONS TAB === */}
@@ -441,6 +492,19 @@ export function PortfolioPage({ portfolio }: Props) {
           portfolio={portfolio}
           onClose={() => setShowAdd(false)}
           onSuccess={() => qc.invalidateQueries({ queryKey: ["portfolio", portfolio] })}
+        />
+      )}
+
+      {signalsModal && (
+        <SignalsModal
+          kind={signalsModal}
+          holdings={
+            signalsModal === "buy"
+              ? activeHoldings.filter((h) => h.recommendation === "STRONG BUY" || h.recommendation === "BUY")
+              : activeHoldings.filter((h) => h.recommendation === "SELL"  || h.recommendation === "STRONG SELL")
+          }
+          totalValue={activeHoldings.reduce((s, h) => s + h.current_value, 0)}
+          onClose={() => setSignalsModal(null)}
         />
       )}
     </div>

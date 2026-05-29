@@ -2,12 +2,14 @@ import { motion } from "framer-motion";
 import {
   TrendingUp, TrendingDown, Target, Zap, BarChart2, Shield, Award, Activity,
 } from "lucide-react";
-import { cn, formatPct, gainColor, gainBg, formatCurrency } from "@/lib/utils";
-import type { Holding } from "@/types";
+import { cn, formatPct, gainColor, gainBg, formatCurrency, computeAlpha } from "@/lib/utils";
+import type { Holding, PortfolioSummary } from "@/types";
 
 interface Props {
   holdings: Holding[];
   delay?: number;
+  /** When omitted, alpha is recomputed locally from `holdings`. */
+  summary?: Pick<PortfolioSummary, "cumulative_alpha_dollar" | "weighted_alpha_pct"> | null;
 }
 
 function calcAnnualizedReturn(gain_pct: number, purchase_date: string): number {
@@ -21,7 +23,7 @@ function calcAnnualizedReturn(gain_pct: number, purchase_date: string): number {
   return (Math.pow(1 + totalReturn, 1 / years) - 1) * 100;
 }
 
-export function MetricsPanel({ holdings, delay = 0 }: Props) {
+export function MetricsPanel({ holdings, delay = 0, summary }: Props) {
   if (!holdings.length) return null;
 
   // --- Derived metrics ---
@@ -50,8 +52,17 @@ export function MetricsPanel({ holdings, delay = 0 }: Props) {
   }));
   const portAnnualized = annualizedReturns.reduce((s, r) => s + r.annualized * r.weight, 0);
 
-  // Average alpha
-  const avgAlpha = holdings.reduce((s, h) => s + h.alpha, 0) / holdings.length;
+  // Portfolio alpha (cumulative $ + weighted %). Server `summary` takes priority
+  // so the figure matches the headline cards; fall back to local recompute when
+  // we're showing a filtered subset (e.g. exclusions applied).
+  const alphaAgg = summary
+    ? { cumulative_alpha_dollar: summary.cumulative_alpha_dollar, weighted_alpha_pct: summary.weighted_alpha_pct }
+    : (() => {
+        const a = computeAlpha(holdings);
+        return { cumulative_alpha_dollar: a.cumulative_alpha_dollar, weighted_alpha_pct: a.weighted_alpha_pct };
+      })();
+  const cumAlphaDollar = alphaAgg.cumulative_alpha_dollar;
+  const weightedAlphaPct = alphaAgg.weighted_alpha_pct;
 
   // Outperforming S&P count
   const outperforming = holdings.filter((h) => h.alpha > 0).length;
@@ -85,12 +96,12 @@ export function MetricsPanel({ holdings, delay = 0 }: Props) {
     },
     {
       icon: Zap,
-      label: "Avg Alpha",
-      value: formatPct(avgAlpha * 100),
-      sub: `${outperforming}/${holdings.length} beat S&P`,
-      color: gainColor(avgAlpha),
-      iconBg: avgAlpha >= 0 ? "bg-accent-blue/10" : "bg-loss/10",
-      iconColor: avgAlpha >= 0 ? "text-accent-blue" : "text-loss",
+      label: "Portfolio Alpha",
+      value: formatCurrency(cumAlphaDollar),
+      sub: `${formatPct(weightedAlphaPct)} weighted · ${outperforming}/${holdings.length} beat S&P`,
+      color: gainColor(cumAlphaDollar),
+      iconBg: cumAlphaDollar >= 0 ? "bg-accent-blue/10" : "bg-loss/10",
+      iconColor: cumAlphaDollar >= 0 ? "text-accent-blue" : "text-loss",
     },
     {
       icon: Activity,

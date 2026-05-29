@@ -136,6 +136,9 @@ def enrich_holding(raw: dict) -> dict:
         "beta": quote.get("beta"),
         "market_cap": quote.get("market_cap"),
         "sector": quote.get("sector"),
+        "ma_10": quote.get("ma_10"),
+        "ma_50": quote.get("ma_50"),
+        "ma_200": quote.get("ma_200"),
         "recommendation": rec["recommendation"],
         "rec_score": rec["score"],
         "rec_color": rec["color"],
@@ -153,12 +156,30 @@ def build_portfolio_summary(holdings: list[dict]) -> dict:
     gain_pct = round((total_gain / total_cost * 100) if total_cost else 0.0, 4)
     todays_gain = round(sum(h["change_pct"] / 100 * h["current_value"] for h in holdings), 2)
 
+    # Cumulative alpha = real $ gain minus what those same dollars would have made in VOO.
+    # Average of per-position alpha % is mathematically meaningless (a $100 winner is
+    # weighted equal to a $100k winner). Sum the dollar deltas instead, and also
+    # compute a value-weighted alpha % for relative comparisons.
+    sp_gain_dollar_total = sum(h.get("sp_gain_dollar", 0) for h in holdings)
+    cumulative_alpha_dollar = round(total_gain - sp_gain_dollar_total, 2)
+    cumulative_alpha_pct = round(
+        (cumulative_alpha_dollar / total_cost * 100) if total_cost else 0.0, 4
+    )
+    weighted_alpha_pct = round(
+        (sum(h.get("alpha", 0) * h.get("current_value", 0) for h in holdings) / total_value * 100)
+        if total_value else 0.0,
+        4,
+    )
+
     return {
         "total_cost": round(total_cost, 2),
         "total_value": round(total_value, 2),
         "total_gain": total_gain,
         "gain_pct": gain_pct,
         "todays_gain": todays_gain,
+        "cumulative_alpha_dollar": cumulative_alpha_dollar,
+        "cumulative_alpha_pct": cumulative_alpha_pct,
+        "weighted_alpha_pct": weighted_alpha_pct,
     }
 
 
@@ -243,16 +264,77 @@ def get_all_portfolios():
 
 @app.get("/api/history/{ticker}")
 def get_history(ticker: str, period: str = "1y"):
-    valid_periods = ["1mo", "3mo", "6mo", "1y", "2y", "5y"]
+    valid_periods = ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "3y", "5y"]
     if period not in valid_periods:
         period = "1y"
-    data = md.get_price_history(ticker.upper(), period)
+    # Pick a sensible bar interval for the requested window.
+    interval = {
+        "1d": "5m",
+        "5d": "30m",
+        "1mo": "1d",
+        "3mo": "1d",
+        "6mo": "1d",
+        "1y": "1d",
+        "2y": "1d",
+        "3y": "1wk",
+        "5y": "1wk",
+    }[period]
+    data = md.get_price_history(ticker.upper(), period, interval)
     return {"ticker": ticker.upper(), "period": period, "history": data}
 
 
 @app.get("/api/quote/{ticker}")
 def get_single_quote(ticker: str):
     return md.get_quote(ticker.upper())
+
+
+# ─── News ─────────────────────────────────────────────────────────────────────
+
+@app.get("/api/news")
+def get_aggregated_news(limit: int = 30):
+    """Aggregate recent news across every ticker held in any portfolio."""
+    tickers: set[str] = set()
+    for portfolio in _get_portfolio_labels():
+        for raw in h_store.get_portfolio(portfolio):
+            tickers.add(raw["ticker"].upper())
+
+    if not tickers:
+        return {"items": []}
+
+    def fetch(t: str) -> list[dict]:
+        try:
+            return md.get_news(t, limit=5)
+        except Exception:
+            return []
+
+    aggregated: list[dict] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=12) as ex:
+        for items in ex.map(fetch, sorted(tickers)):
+            aggregated.extend(items)
+
+    # Dedupe by link, preferring the entry with the largest set of fields
+    seen: dict[str, dict] = {}
+    for item in aggregated:
+        link = item.get("link") or item.get("title")
+        if not link:
+            continue
+        if link not in seen:
+            seen[link] = item
+
+    deduped = list(seen.values())
+
+    # Sort newest first
+    def _ts(it: dict) -> str:
+        return it.get("published") or ""
+    deduped.sort(key=_ts, reverse=True)
+
+    return {"items": deduped[:limit]}
+
+
+@app.get("/api/news/{ticker}")
+def get_ticker_news(ticker: str, limit: int = 6):
+    items = md.get_news(ticker.upper(), limit=limit)
+    return {"ticker": ticker.upper(), "items": items}
 
 
 # ─── Watchlist endpoint ───────────────────────────────────────────────────────
@@ -920,6 +1002,7 @@ class PlannerInput(BaseModel):
     external_ira: float = 0.0                   # Traditional or Roth IRA
     external_cash: float = 0.0                  # Cash, HYSA, savings accounts
     external_real_estate: float = 0.0           # Home equity / investment property equity
+    external_espp_rsu: float = 0.0              # Employer stock from ESPP / RSU grants
     external_other: float = 0.0                 # Other investments, brokerage, crypto, etc.
 
 
@@ -1040,8 +1123,12 @@ def run_retirement_planner(body: PlannerInput):
     external_ira           = max(0.0, body.external_ira)
     external_cash          = max(0.0, body.external_cash)
     external_real_estate   = max(0.0, body.external_real_estate)
+    external_espp_rsu      = max(0.0, body.external_espp_rsu)
     external_other         = max(0.0, body.external_other)
-    total_external         = external_401k + external_ira + external_cash + external_real_estate + external_other
+    total_external         = (
+        external_401k + external_ira + external_cash +
+        external_real_estate + external_espp_rsu + external_other
+    )
     total_value           += total_external   # combined starting point for projections
 
     external_breakdown = {
@@ -1050,6 +1137,7 @@ def run_retirement_planner(body: PlannerInput):
         "ira":               round(external_ira, 2),
         "cash":              round(external_cash, 2),
         "real_estate":       round(external_real_estate, 2),
+        "espp_rsu":          round(external_espp_rsu, 2),
         "other":             round(external_other, 2),
         "total_external":    round(total_external, 2),
         "grand_total":       round(total_value, 2),

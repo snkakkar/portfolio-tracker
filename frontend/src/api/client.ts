@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { AllPortfoliosData, PortfolioData, PriceBar, WatchItem, DiscoverStock, PortfolioSuggestion, PlannerInput, PlannerResult, ExitedPosition, ImportRow, PortfolioMeta } from "@/types";
+import type { AllPortfoliosData, PortfolioData, PriceBar, WatchItem, DiscoverStock, PortfolioSuggestion, PlannerInput, PlannerResult, ExitedPosition, ImportRow, PortfolioMeta, NewsItem, RichQuote } from "@/types";
 
 const BASE = "/api";
 
@@ -100,6 +100,17 @@ export const api = {
 
   exportCurrent: (format: "csv" | "xlsx") =>
     window.open(`${BASE}/export/current?format=${format}`, "_blank"),
+
+  // News
+  getPortfolioNews: (limit = 30): Promise<{ items: NewsItem[] }> =>
+    axios.get(`${BASE}/news`, { params: { limit } }).then((r) => r.data),
+
+  getTickerNews: (ticker: string, limit = 6): Promise<{ ticker: string; items: NewsItem[] }> =>
+    axios.get(`${BASE}/news/${ticker}`, { params: { limit } }).then((r) => r.data),
+
+  // Rich quote (used by equity detail page)
+  getQuote: (ticker: string): Promise<RichQuote> =>
+    axios.get(`${BASE}/quote/${ticker}`).then((r) => r.data),
 
   // Portfolio management
   listPortfolios: (): Promise<{ portfolios: PortfolioMeta[] }> =>
